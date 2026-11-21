@@ -76,6 +76,8 @@ bash core/scripts/host-command.sh backup
 bash core/deploy.sh --check             # 只读检查部署状态
 ```
 
+启动命令会等待容器健康，并验证管理台实际登录、首页及宿主状态查询成功后才返回；失败或超时返回非零错误。
+
 Windows 可使用 `core/start.ps1` 和 `core/stop.ps1`；完整停机使用 `core/stop.ps1 -Module all`。拔盘或重启 WSL 前必须确认数据库已正常停止并卸载。
 
 ## 开发与验证

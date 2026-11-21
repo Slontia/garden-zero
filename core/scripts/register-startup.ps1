@@ -5,6 +5,8 @@ $content=@"
 `$ErrorActionPreference='Stop'
 if(Test-Path 'C:\nas\system\state\deployment-blocked'){throw 'NAS storage incident unresolved; startup blocked.'}
 & wsl.exe -d $Distribution -u root -- systemctl start nas-session.service
+if(`$LASTEXITCODE -ne 0){exit `$LASTEXITCODE}
+& wsl.exe -d $Distribution -u root -- python3 -B /mnt/c/nas/system/installed/nasctl.py wait-ready
 exit `$LASTEXITCODE
 "@
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent().Name

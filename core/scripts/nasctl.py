@@ -155,6 +155,7 @@ def start(c,module,enable_all=False):
   if total<5*1024**3:raise RuntimeError('WSL memory increase not active; restart WSL before starting machine learning')
  remember(c,modules,True)
  infra=[m for m in modules if m in ('meta','tailscale')]
+ if 'meta' in modules:run(['systemctl','start','nas-agent.service'],stdout=subprocess.DEVNULL)
  if infra:
   compose(c,'up','-d','--no-build',*sum([MODULES[m] for m in infra],[]))
  if any(m in ('immich','ml') for m in modules):mount(c)
@@ -162,6 +163,9 @@ def start(c,module,enable_all=False):
  services=sum([MODULES[m] for m in modules],[])
  if services:compose(c,'up','-d','--no-build','--wait','--wait-timeout','240',*services)
  if services:wait_services(c,services)
+ if 'meta' in modules:
+  from nas_ready import wait_meta_ready
+  wait_meta_ready(c,modules)
  audit(c,'start',modules)
 
 def stop(c,module,remember_selection=True):
@@ -200,7 +204,7 @@ def status(c):
   rows=inventory(c);result['docker']='ready'
   for m,services in MODULES.items():
    selected=[x for x in rows if x['service'] in services]
-   state='stopped' if not selected or all(x['state']=='exited' for x in selected) else 'ready' if len(selected)==len(services) and all(x['health']=='healthy' for x in selected) else 'starting' if all(x['state']=='running' for x in selected) else 'fault'
+   state='stopped' if not selected or all(x['state']=='exited' for x in selected) else 'ready' if len(selected)==len(services) and all(x['state']=='running' and x['health']=='healthy' for x in selected) else 'starting' if all(x['state']=='running' for x in selected) else 'fault'
    if m=='ml' and not c['ml_enabled']:state='pending_memory'
    result['modules'][m]={'state':state,'containers':selected,'services':services}
  except Exception:result['docker']='unavailable'
@@ -511,7 +515,7 @@ def scheduler():
 
 def main():
  global WRITER
- parser=argparse.ArgumentParser();parser.add_argument('command',choices=['start','stop','status','mount','unmount','backup','agent','logs','shutdown']);parser.add_argument('module',nargs='?',default='all');parser.add_argument('--purge-history',action='store_true');a=parser.parse_args();c=cfg()
+ parser=argparse.ArgumentParser();parser.add_argument('command',choices=['start','stop','status','mount','unmount','backup','agent','logs','shutdown','wait-ready']);parser.add_argument('module',nargs='?',default='all');parser.add_argument('--purge-history',action='store_true');a=parser.parse_args();c=cfg()
  if a.purge_history and a.command!='backup':raise RuntimeError('--purge-history only applies to backup')
  if a.command=='agent':
   from nas_writer import Writer
@@ -520,6 +524,11 @@ def main():
   if Path(path).exists():Path(path).unlink()
   with UnixServer(path,Agent) as server:
    os.chmod(path,0o660);threading.Thread(target=scheduler,daemon=True).start();server.serve_forever()
+ elif a.command=='wait-ready':
+  from nas_ready import wait_meta_ready
+  modules=autostart(c) if a.module=='all' else [a.module]
+  if a.module=='all' and not c['ml_enabled']:modules=[m for m in modules if m!='ml']
+  wait_meta_ready(c,modules)
  elif a.command=='status':print(json.dumps(status(c),ensure_ascii=False,indent=2))
  elif a.command=='logs':print(logs(c,a.module))
  else:
