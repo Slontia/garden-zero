@@ -82,6 +82,8 @@ Windows 可使用 `core/start.ps1` 和 `core/stop.ps1`；完整停机使用 `cor
 
 ## 开发与验证
 
+AI 协作者请先阅读 [AGENTS.md](AGENTS.md)；用户确认的长期功能约束应同步维护在该文件中。
+
 源码只写入 `core`，实际配置、密钥、测试产物和运行状态写入 `system`。Python 入口使用 `python3 -B`，避免生成字节码缓存。
 
 ```bash
