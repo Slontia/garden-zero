@@ -71,6 +71,19 @@ try {
     Start-Sleep -Milliseconds 2200
     if ((Evaluate "document.querySelector('#resource-uptime').textContent") -eq $before) { throw 'Uptime does not tick' }
     if ((Evaluate "(()=>{let ids=['resource-cpu','resource-memory','resource-nas-disk','resource-local-disk'],r=ids.map(id=>document.getElementById(id).getBoundingClientRect());return r.every(x=>Math.abs(x.top-r[0].top)<2)&&!document.querySelector('#resource-disks')&&document.querySelectorAll('.composite-meter').length===2})()") -ne $true) { throw 'Four-column composite resource layout failed' }
+    $pathsOk = Evaluate "(()=>{for(let [app,path]of [['immich','immich/'],['git','git/'],['syncthing','shared/']]){let card=document.querySelector('#app-'+app);if(card.open||card.querySelector('summary .write-path code')?.textContent!==path)return false}return !document.querySelector('#app-knowledge summary .write-path')&&!document.querySelector('#app-files summary .write-path')})()"
+    if (-not $pathsOk) { throw 'Collapsed writable paths or read-only app attribution mismatch' }
+    $position = Evaluate "(()=>{let b=document.querySelector('#app-immich .write-path-icon');let r=b.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()"
+    Invoke-CDP 'Input.dispatchMouseEvent' @{type='mouseMoved';x=$position.x;y=$position.y} | Out-Null
+    if ((Evaluate "getComputedStyle(document.querySelector('#app-immich .path-purpose-tooltip')).display!=='none'") -ne $true) { throw 'Writable path purpose does not appear on hover' }
+    Evaluate "document.querySelector('#app-immich .write-path-icon').click()" | Out-Null
+    if ((Evaluate "document.querySelector('#app-immich').open") -eq $true) { throw 'Purpose icon unexpectedly expands app' }
+    Invoke-CDP 'Input.dispatchMouseEvent' @{type='mouseMoved';x=10;y=10} | Out-Null
+    Evaluate "document.querySelector('#app-git .write-path-icon').focus({preventScroll:true})" | Out-Null
+    if ((Evaluate "getComputedStyle(document.querySelector('#app-git .path-purpose-tooltip')).display!=='none'") -ne $true) { throw 'Writable path purpose missing for keyboard focus' }
+    Invoke-CDP 'Input.dispatchKeyEvent' @{type='keyDown';key='Escape';code='Escape';windowsVirtualKeyCode=27} | Out-Null
+    if ((Evaluate "getComputedStyle(document.querySelector('#app-git .path-purpose-tooltip')).display==='none'") -ne $true) { throw 'Purpose tooltip Escape dismissal failed' }
+    Evaluate "document.activeElement.blur()" | Out-Null
     Screenshot 'apps-desktop'
     Evaluate "appViews.git.card.open=true;document.querySelector('#app-git').scrollIntoView({block:'center'})" | Out-Null
     if ((Evaluate "document.querySelector('#git-details').textContent.includes('SSH \u516c\u94a5') && ![...document.querySelectorAll('.permission-table th')].some(x=>x.textContent==='\u53ea\u8bfb\u8bbf\u95ee')") -ne $true) { throw 'Git info or write ownership details mismatch' }
