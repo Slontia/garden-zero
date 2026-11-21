@@ -28,14 +28,18 @@
 
 ## 资源统计口径
 
-应用页仅保留一块紧凑资源区域：运行时间用累计小时 HH:MM:SS（超过一天不重置小时），CPU 与内存使用细条，磁盘使用容量条；没有环形图、时钟或四张独立卡片。磁盘空间不在备份页重复展示。
+应用页仅保留一块紧凑资源区域。桌面运行时间与四组细柱图并列：CPU、内存、NAS 数据盘、本机存储盘；手机上四图为 2×2，运行时间单独一行。运行时间使用累计小时 HH:MM:SS，没有时钟。首页不查询或展示可拔插镜像盘容量，备份页也不重复展示磁盘空间。
 
-- 运行时间来自 /proc/uptime，是 WSL/Linux 环境运行时间。
-- CPU 来自 /proc/stat 的采样差值，对所有可见逻辑核心归一化，范围 0—100%。
-- 内存已用为 MemTotal 减 MemAvailable，百分比以 WSL 可见内存为分母。
-- CPU 与内存均包含同环境其他进程，不是 NAS 容器合计或 Windows 整机用量。
-- 数据 SSD、本机快照盘和配置的镜像备份盘展示所在卷整体用量，包含其他文件。Windows 镜像卷可在 WSL 未挂载盘符时只读查询容量，并核对登记卷身份。
-- 未知或失败显示未知，不伪造 0。相册数据库内部用量及稀疏镜像分配仍只放在相册展开栏。
+- CPU、内存复合图：深色为 NAS 用量，浅色为宿主总占用，底色为资源上限。宿主总占用已经包含 NAS，不将两者相加。
+- NAS 范围为项目标签对应的运行容器，以及 nas-agent、nas-session、nas-soak 控制服务。读取 cgroup v2 的层级计账，去重父子组，避免重复累计；不包含其他 Docker 项目。
+- CPU 分项来自 cpu.stat 的 usage_usec 差值，用相同区间的 /proc/stat 全核心时间和 SC_CLK_TCK 换算为宿主容量百分比。组发生新增、退出或计数重置时重新采样；单核 Docker CPU 百分比不直接与宿主百分比混用。
+- 复合内存统一计入缓存：NAS 使用 memory.current 汇总，宿主总占用使用 MemTotal−MemFree，上限为 MemTotal。MemTotal−MemAvailable 的传统工作负载估算仍保留为 API 辅助字段，不用它与含缓存的 NAS 计账直接叠加。
+- WSL 部署仅读取 WSL 可见的 CPU 与内存上限，不读取 Windows 整机资源；普通 Linux 同样按宿主可见资源统计。
+- NAS 数据盘及本机存储盘显示所在卷整体用量，包含其他文件。本机存储盘承载数据库、运行数据及本机快照，不代表专用备份分区。
+- 采样失败显示未知，不伪造 NAS 用量为 0。分项与总量读取存在很短的采样时差，图层独立绘制，不能将两层宽度相加。
+- 相册数据库内部用量及稀疏镜像分配仍只放在相册展开栏。
+
+计账参考：[Linux cgroup v2](https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html) 与 [/proc 统计](https://www.kernel.org/doc/html/latest/filesystems/proc.html)。
 
 WSL2 使用宿主 Windows 的物理 CPU 和内存；虚拟 CPU 由宿主调度，内存按需使用并受 .wslconfig 上限约束。上限不代表预先独占同等物理内存。项目不因界面调整修改 WSL 设置。
 

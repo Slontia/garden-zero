@@ -215,12 +215,8 @@ def status(c):
   result['data_access']=snapshot(c,inspected)
  except Exception as error:result['data_access']={'state':'unavailable','rules':[],'mounts':[],'errors':[str(error)]}
 
- for name,key in [('ssd','root'),('backup','backup_root'),('database','mount'),('mirror','hdd_root')]:
-  if name=='mirror' and not c.get(key):continue
+ for name,key in [('ssd','root'),('backup','backup_root'),('database','mount')]:
   try:
-   if name=='mirror':
-    from nas_resources import windows_volume_usage
-    result['disk'][name]=windows_volume_usage(c[key],c.get('hdd_guid'));continue
    if name=='database':verify_mount(c)
    d=shutil.disk_usage(c[key]);result['disk'][name]={'total':d.total,'free':d.free,'used':d.used}
   except Exception:result['disk'][name]={'state':'unavailable'}
@@ -228,7 +224,7 @@ def status(c):
   p=Path(c['image']);st=p.stat();result['disk']['image']={'logical':st.st_size,'allocated':st.st_blocks*512,'location':'internal' if str(p).startswith('/mnt/c/nas/') else 'ssd','backing_free':shutil.disk_usage(p.parent).free}
  except OSError:pass
  from nas_resources import snapshot as resource_snapshot
- result['resources']=resource_snapshot()
+ result['resources']=resource_snapshot(c['project'],inspected if 'inspected' in locals() else None)
  result['storage_blocked']=(Path(c['host'])/'state/deployment-blocked').exists()
  result['backup']=backup_summary(c,read_state(c,'backup.json',{'state':'not_run'}),datetime.datetime.now(),read_state(c,'schedules.json',{'backup':True}).get('backup',True))
  try:result['backup']['same_disk_as_database']=os.stat(Path(c['image']).parent).st_dev==os.stat(c['backup_root']).st_dev

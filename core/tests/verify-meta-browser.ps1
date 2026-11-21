@@ -70,6 +70,7 @@ try {
     $before = Evaluate "document.querySelector('#resource-uptime').textContent"
     Start-Sleep -Milliseconds 2200
     if ((Evaluate "document.querySelector('#resource-uptime').textContent") -eq $before) { throw 'Uptime does not tick' }
+    if ((Evaluate "(()=>{let ids=['resource-cpu','resource-memory','resource-nas-disk','resource-local-disk'],r=ids.map(id=>document.getElementById(id).getBoundingClientRect());return r.every(x=>Math.abs(x.top-r[0].top)<2)&&!document.querySelector('#resource-disks')&&document.querySelectorAll('.composite-meter').length===2})()") -ne $true) { throw 'Four-column composite resource layout failed' }
     Screenshot 'apps-desktop'
     Evaluate "appViews.git.card.open=true;document.querySelector('#app-git').scrollIntoView({block:'center'})" | Out-Null
     if ((Evaluate "document.querySelector('#git-details').textContent.includes('SSH \u516c\u94a5') && ![...document.querySelectorAll('.permission-table th')].some(x=>x.textContent==='\u53ea\u8bfb\u8bbf\u95ee')") -ne $true) { throw 'Git info or write ownership details mismatch' }
@@ -98,6 +99,9 @@ try {
         Navigate $entry[0] $entry[1]
         Check-Navigation $entry[0]
         if ((Evaluate "document.documentElement.scrollWidth<=innerWidth") -ne $true) { throw ('Mobile overflow '+$entry[0]) }
+        if ($entry[0] -eq '/apps') {
+            if ((Evaluate "(()=>{let r=['resource-cpu','resource-memory','resource-nas-disk','resource-local-disk'].map(id=>document.getElementById(id).getBoundingClientRect());return Math.abs(r[0].top-r[1].top)<2&&Math.abs(r[2].top-r[3].top)<2&&r[2].top>r[0].bottom&&r[1].left>r[0].left})()") -ne $true) { throw 'Mobile resources are not a 2x2 grid' }
+        }
         Screenshot ($entry[0].Substring(1)+'-mobile')
     }
     Evaluate "fetch('/api/logout',{method:'POST',headers:{'Content-Type':'application/json','X-NAS-Request':'1'},body:'{}'}).then(r=>r.ok)" | Out-Null
