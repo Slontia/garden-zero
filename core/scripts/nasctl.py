@@ -4,7 +4,7 @@ import sys as _nas_sys
 _nas_sys.dont_write_bytecode=True
 import argparse,contextlib,datetime,fcntl,hashlib,hmac,http.client,http.server,json,os,shutil,socket,socketserver,subprocess,sys,tarfile,tempfile,threading,time,urllib.request
 from pathlib import Path
-from nas_policy import backup_due,backup_summary
+from nas_policy import backup_due,backup_summary,mirror_due
 CONFIG=Path(os.environ.get('NAS_HOST_CONFIG','/mnt/c/nas/system/config/config.json'))
 DOCKER=['/usr/bin/docker','--host','unix:///var/run/docker.sock']
 MODULES={'immich':['immich-server','database','cache'],'ml':['immich-machine-learning'],'meta':['meta'],'files':['files'],'knowledge':['knowledge'],'git':['git'],'smb':['smb'],'syncthing':['syncthing'],'tailscale':['tailscale']}
@@ -225,10 +225,12 @@ def status(c):
  result['backup']=backup_summary(c,read_state(c,'backup.json',{'state':'not_run'}),datetime.datetime.now(),read_state(c,'schedules.json',{'backup':True}).get('backup',True))
  try:result['backup']['same_disk_as_database']=os.stat(Path(c['image']).parent).st_dev==os.stat(c['backup_root']).st_dev
  except OSError:result['backup']['same_disk_as_database']=None
+ result['backup']['external_mirror_configured']=bool(c.get('hdd_root'))
  result['observation']=read_state(c,'soak.json',{'state':'not_run'})
  result['schedules']=read_state(c,'schedules.json',{'backup':True,'cloud':True})
  result['cloud']={'state':'not_configured' if not c['cloud_repository'] else 'configured','last':read_state(c,'cloud-backup.json',{})}
- result['hdd']={'state':'not_connected' if not c['hdd_root'] else 'configured'}
+ hdd_last=read_state(c,'hdd-backup.json',{})
+ result['hdd']={'state':hdd_last.get('state','configured') if c.get('hdd_root') else 'not_connected','mode':c.get('hdd_mode'),'path':c.get('hdd_root'),'last':hdd_last}
  try:
   result['git']={'state':'awaiting_public_key' if not (Path(c['host'])/'state/git/authorized_keys').read_text().strip() else 'configured','repositories':[p.name for p in (Path(c['data'])/'git').glob('*.git') if p.is_dir() and not p.is_symlink()]}
  except OSError:result['git']={'state':'storage_unavailable','repositories':[]}
@@ -335,7 +337,7 @@ def backup(c):
    tar.add(c['data'],arcname='data',recursive=True)
   if before!=data_tree(c['data']):raise RuntimeError('User content changed during backup; refusing a COMPLETE snapshot')
   with tarfile.open(stage/'configuration.tar','w') as tar:
-   tar.add(Path(c['host'])/'config',arcname='system/config');tar.add(Path(c['host'])/'secrets',arcname='system/secrets')
+   tar.add(Path(c['host'])/'config',arcname='system/config');tar.add(Path(c['host'])/'secrets',arcname='system/secrets',filter=lambda m:None if m.name.endswith('/hdd-mirror-key') else m)
    for filename in ('desired-modules.json','autostart.json','disabled.json','schedules.json','remote.json'):
     p=Path(c['host'])/'state'/filename
     if p.is_file():tar.add(p,arcname='system/state/'+filename)
@@ -343,6 +345,9 @@ def backup(c):
     tar.add(Path(c['root'])/'core'/directory,arcname='core/'+directory,filter=lambda m:None if '__pycache__' in m.name else m)
    for filename in ('README.md','deploy.sh','start.sh','stop.sh','start.ps1','stop.ps1','.env.example','.gitignore','.gitattributes'):
     tar.add(Path(c['root'])/'core'/filename,arcname='core/'+filename)
+   for filename in ('README.md','LICENSE','.gitignore','.gitattributes','.editorconfig','CONTRIBUTING.md','SECURITY.md','THIRD_PARTY_NOTICES.md'):
+    p=Path(c['root'])/filename
+    if p.is_file():tar.add(p,arcname='project/'+filename)
    tar.add(Path(c['host'])/'state/git',arcname='system/state/git');tar.add(Path(c['host'])/'state/tailscale',arcname='system/state/tailscale')
    for filename in ('config.xml','cert.pem','key.pem','https-cert.pem','https-key.pem'):
     tar.add(Path(c['host'])/'state/syncthing'/filename,arcname='system/state/syncthing/'+filename)
@@ -365,6 +370,13 @@ def backup(c):
     record['resume_error']=str(error)
     if record['state']=='success':record['state']='success_with_resume_error'
     statepath.write_text(json.dumps(record));audit(c,'backup-resume-error',str(error));raise
+ return record
+
+def backup_with_mirror(c,purge_history=False):
+ result=backup(c)
+ if result['state']=='success' and c.get('hdd_root'):
+  run(['/usr/bin/python3',str(Path(c['host'])/'installed/external-backup.py'),'hdd','backup']+(['--purge-history'] if purge_history else []))
+ return result
 
 def logs(c,module):
  if module not in MODULES:raise RuntimeError('Unknown module')
@@ -405,9 +417,18 @@ def action(c,data):
    if operation in ('stop','restart'):stop(c,module)
    if operation in ('start','restart'):start(c,module)
  elif operation=='backup':
-  with lock():backup(c)
+  purge=data.get('purge_history',False)
+  if not isinstance(purge,bool):raise RuntimeError('purge_history must be boolean')
+  with lock():backup_with_mirror(c,purge_history=purge)
  elif operation in ('cloud-backup','hdd-backup'):
-  with lock():run(['/usr/bin/python3',str(Path(c['host'])/'installed/external-backup.py'),operation.split('-')[0],'backup'])
+  with lock():
+   if operation=='hdd-backup':
+    if not c.get('hdd_root'):raise RuntimeError('Mirror target is not configured')
+    purge=data.get('purge_history',False)
+    if not isinstance(purge,bool):raise RuntimeError('purge_history must be boolean')
+    result=backup_with_mirror(c,purge_history=purge)
+    if result['state']=='skipped':raise RuntimeError('Database is stopped; mirror not updated from stale data')
+   else:run(['/usr/bin/python3',str(Path(c['host'])/'installed/external-backup.py'),'cloud','backup'])
  elif operation=='schedule':
   task=data.get('task');enabled=data.get('enabled')
   if task not in ('backup','cloud') or not isinstance(enabled,bool):raise RuntimeError('Invalid schedule')
@@ -453,6 +474,7 @@ class UnixServer(socketserver.ThreadingMixIn,socketserver.UnixStreamServer):daem
 
 def scheduler():
  last_backup_attempt=0
+ last_mirror_attempt=0
  while True:
   try:
    c=cfg()
@@ -473,9 +495,13 @@ def scheduler():
    schedules=read_state(c,'schedules.json',{'backup':True,'cloud':True})
    if not (Path(c['host'])/'state/deployment-blocked').exists() and schedules['backup'] and time.monotonic()-last_backup_attempt>300 and backup_due(c,last,now):
     last_backup_attempt=time.monotonic()
+    last_mirror_attempt=time.monotonic()
     with lock():
-     backup(c)
-     if schedules['cloud'] and c.get('cloud_repository'):run(['/usr/bin/python3',str(Path(c['host'])/'installed/external-backup.py'),'cloud','backup'])
+     backup_result=backup_with_mirror(c)
+     if backup_result['state']=='success' and schedules['cloud'] and c.get('cloud_repository'):run(['/usr/bin/python3',str(Path(c['host'])/'installed/external-backup.py'),'cloud','backup'])
+   if schedules['backup'] and not (Path(c['host'])/'state/deployment-blocked').exists() and time.monotonic()-last_mirror_attempt>300 and mirror_due(c,read_state(c,'backup.json',{}),read_state(c,'hdd-backup.json',{})):
+    last_mirror_attempt=time.monotonic()
+    with lock():run(['/usr/bin/python3',str(Path(c['host'])/'installed/external-backup.py'),'hdd','backup'])
    if mounted(c) and (shutil.disk_usage(c['root']).free<c['critical_outer_free'] or shutil.disk_usage(Path(c['image']).parent).free<c.get('critical_image_outer_free',c['critical_outer_free']) or shutil.disk_usage(c['mount']).free<1024**3):
     with lock():stop(c,'business',remember_selection=False);audit(c,'capacity-guard','business stopped; image remains mounted')
   except Exception as error:
@@ -485,7 +511,8 @@ def scheduler():
 
 def main():
  global WRITER
- parser=argparse.ArgumentParser();parser.add_argument('command',choices=['start','stop','status','mount','unmount','backup','agent','logs','shutdown']);parser.add_argument('module',nargs='?',default='all');a=parser.parse_args();c=cfg()
+ parser=argparse.ArgumentParser();parser.add_argument('command',choices=['start','stop','status','mount','unmount','backup','agent','logs','shutdown']);parser.add_argument('module',nargs='?',default='all');parser.add_argument('--purge-history',action='store_true');a=parser.parse_args();c=cfg()
+ if a.purge_history and a.command!='backup':raise RuntimeError('--purge-history only applies to backup')
  if a.command=='agent':
   from nas_writer import Writer
   WRITER=Writer(c,audit);WRITER.serve()
@@ -498,6 +525,7 @@ def main():
  else:
   with lock():
    if a.command=='shutdown':stop(c,'all',remember_selection=False)
+   elif a.command=='backup':backup_with_mirror(c,purge_history=a.purge_history)
    elif a.command in ('start','stop'):globals()[a.command](c,a.module)
    else:globals()[a.command](c)
 if __name__=='__main__':

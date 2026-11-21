@@ -54,3 +54,8 @@ def observation(previous, now, *, problem=None, paused=False, boot_id='', gap_se
         samples+=1
         state='24h_probes_passed' if now-window_start>=86400 and samples>=144 else 'observing'
     return {'schema':2,'state':state,'boot_id':boot_id,'storage_generation':storage_generation or previous.get('storage_generation',''),'window_started':window_start,'last':now,'samples':samples,'window_seconds':max(0,int(now-window_start)),'history':history[-100:],'last_problem':problem,'scope':'Periodic readiness/database/media probes; not a full batch-load certification'}
+
+
+def mirror_due(config, backup_record, mirror_record):
+    """Retry only against an already successful consistent local snapshot."""
+    return bool(config.get('hdd_root') and backup_record.get('state')=='success' and last_success_time(backup_record) and (mirror_record.get('source')!=backup_record.get('last_success') or mirror_record.get('state') in ('failed','running','interrupted')))
