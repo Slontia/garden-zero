@@ -43,9 +43,20 @@ try:
    if subprocess.run(DOCKER+['exec',name,'pg_isready','-h','127.0.0.1','-U','postgres','-d','immich'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0:break
    time.sleep(1)
   else:raise RuntimeError('Recovery database readiness timeout')
+  databases=manifest.get('databases',{'immich':{'dump':'database.dump','tables':manifest['tables']}})
+  if set(databases)-{'immich','joplin'}:raise RuntimeError('Unregistered database in recovery manifest')
   if phase=='restore':
-   with (backup/'database.dump').open('rb') as f:cmd(DOCKER+['exec','-i',name,'pg_restore','--exit-on-error','-U','postgres','-d','immich'],stdin=f)
-  if db_signature(name)!=manifest['tables']:raise RuntimeError('Recovered table counts differ from manifest')
+   if 'database-roles.sql' in manifest['files']:
+    roles=(backup/'database-roles.sql').read_text().replace('CREATE ROLE postgres;','')
+    cmd(DOCKER+['exec','-i',name,'psql','-v','ON_ERROR_STOP=1','-U','postgres','-d','postgres'],input=roles,text=True,stdout=subprocess.DEVNULL)
+   for database,entry in databases.items():
+    if entry['dump'] not in manifest['files'] or Path(entry['dump']).name!=entry['dump']:raise RuntimeError('Unverified dump in manifest')
+    if database!='immich':cmd(DOCKER+['exec',name,'createdb','-U','postgres',database])
+    with (backup/entry['dump']).open('rb') as f:cmd(DOCKER+['exec','-i',name,'pg_restore','--exit-on-error','-U','postgres','-d',database],stdin=f)
+  for database,entry in databases.items():
+   if 'database-roles.sql' in manifest['files']:
+    cmd(DOCKER+['exec',name,'psql','-v','ON_ERROR_STOP=1','-U','postgres','-d','postgres','-c',f'ALTER DATABASE {database} OWNER TO {database}; REVOKE ALL ON DATABASE {database} FROM PUBLIC;'])
+   if db_signature(name,database)!=entry['tables']:raise RuntimeError('Recovered table counts differ from manifest: '+database)
   # Full stable fingerprints on the actual user's asset and account rows, not just readiness.
   sql='SELECT md5(coalesce(string_agg(row_to_json(t)::text,\'\' ORDER BY row_to_json(t)::text),\'\')) FROM public.asset t'
   fingerprint=out(DOCKER+['exec',name,'psql','-U','postgres','-d','immich','-Atc',sql])

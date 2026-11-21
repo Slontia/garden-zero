@@ -2,7 +2,7 @@
 
 以网页统一管理应用、资源与数据权限，支持多端离线读写和冲突保留的个人 NAS。
 
-零号庭院围绕「自己的数据，自己掌控」组织一套 Windows + WSL2 NAS 环境：用一个管理台连接相册、共享同步盘、文件浏览、知识库和 Git，明确每个应用能读写哪些目录，并提供私人远程访问和备份恢复工具。
+零号庭院围绕「自己的数据，自己掌控」组织一套 Windows + WSL2 NAS 环境：用一个管理台连接相册、共享同步盘、文件浏览、Joplin 笔记和 Git，明确每个应用能读写哪些目录，并提供私人远程访问和备份恢复工具。
 
 > 当前是持续开发中的单实例项目，已在现有 Windows + WSL2 主机验证核心功能。新主机一键部署、异机恢复、云端备份尚未完成完整验收。
 
@@ -23,11 +23,11 @@
 | Immich 相册 | 照片与视频管理；智能检索可单独关闭 |
 | 共享同步盘 | Syncthing 完整副本同步、设备连接、冲突和版本查看 |
 | 文件浏览 | 网页浏览与下载、SMB 只读挂载 |
-| 私人知识库 | 文章与附件管理 |
+| Joplin 笔记 | 手机与电脑离线写作，标签、图片及附件同步 |
 | Git SSH | 私人 Git 仓库访问 |
 | 基础服务 | 管理台、认证与 Tailscale 私人远程连接 |
 
-应用通过 Docker Compose 部署。数据库、缓存等依赖容器由对应应用管理，具体镜像定义见 [版本锁](core/templates/versions.lock.json)和 [Compose](core/compose/nas.yml)。
+应用通过 Docker Compose 部署。PostgreSQL 作为共享基础服务，应用使用独立账户和数据库；缓存等专属依赖由对应应用管理，具体镜像定义见 [版本锁](core/templates/versions.lock.json)和 [Compose](core/compose/nas.yml)。
 
 ## 目录结构
 
@@ -79,6 +79,8 @@ bash core/deploy.sh --check             # 只读检查部署状态
 启动命令会等待容器健康，并验证管理台实际登录、首页及宿主状态查询成功后才返回；失败或超时返回非零错误。
 
 Windows 可使用 `core/start.ps1` 和 `core/stop.ps1`；完整停机使用 `core/stop.ps1 -Module all`。拔盘或重启 WSL 前必须确认数据库已正常停止并卸载。
+
+Joplin 的写作界面在客户端，管理台入口用于账户管理。它与 Immich 共用一个 PostgreSQL 实例，使用不同数据库及独立账户。配置、存储与客户端连接见 [Joplin 与共享数据库](core/docs/JOPLIN.md)。
 
 ## 开发与验证
 

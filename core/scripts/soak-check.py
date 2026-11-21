@@ -9,7 +9,7 @@ from nas_policy import observation
 def probe(c):
     rows=inventory(c);active={x['service']:x for x in rows}
     disabled=[m for m in ('meta','files','knowledge','immich') if m not in autostart(c)]
-    required={'meta':'meta','files':'files','knowledge':'knowledge','immich-server':'immich'}
+    required={'meta':'meta','files':'files','joplin':'knowledge','immich-server':'immich'}
     if any(active.get(service,{}).get('state')!='running' and module in disabled for service,module in required.items()):
         return True
     volume(c);verify_mount(c)
@@ -17,8 +17,13 @@ def probe(c):
         if row['oom']:raise RuntimeError('OOM recorded: '+row['service'])
     output(DOCKER+['exec','nas-database-1','psql','-v','ON_ERROR_STOP=1','-U','postgres','-d','immich','-Atc','SELECT 1'])
     opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    for port,path in [(8080,'/health'),(8081,'/health'),(8082,'/health'),(2283,'/api/server/ping')]:
-        with opener.open('http://127.0.0.1:'+str(port)+path,timeout=10) as response:
+    for port,path in [(8080,'/health'),(8081,'/health'),(8082,'/api/ping'),(2283,'/api/server/ping')]:
+        headers={}
+        if port==8082:
+            from urllib.parse import urlsplit
+            base=dict(line.split('=',1) for line in (Path(c['host'])/'config/joplin.env').read_text().splitlines() if '=' in line)['APP_BASE_URL']
+            headers['Host']=urlsplit(base).netloc
+        with opener.open(urllib.request.Request('http://127.0.0.1:'+str(port)+path,headers=headers),timeout=10) as response:
             if response.status!=200:raise RuntimeError('HTTP probe failed: '+str(port))
     fixture=Path(c['root'])/'system/runtime/acceptance/immich.json'
     if fixture.is_file():

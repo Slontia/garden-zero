@@ -55,9 +55,9 @@ def prepare(c,versions):
   p=host/'secrets'/name
   if not p.is_file() or p.is_symlink():raise RuntimeError('Required local credential missing: '+name)
  # Validate every existing immutable app setting before writing any missing files.
- password=(host/'secrets/postgres-password').read_text().strip()
- if not password or any(ch not in '0123456789abcdef' for ch in password):raise RuntimeError('Unexpected PostgreSQL credential format')
- values={host/'config/immich.env':'DB_PASSWORD='+password+'\n',host/'config/immich.json':json.dumps({'machineLearning':{'enabled':bool(c['ml_enabled']),'urls':['http://immich-machine-learning:3003']}},indent=2)+'\n'}
+ from nas_database import credentials
+ credentials(c)
+ values={host/'config/immich.json':json.dumps({'machineLearning':{'enabled':bool(c['ml_enabled']),'urls':['http://immich-machine-learning:3003']}},indent=2)+'\n'}
  for path,data in values.items():
   if path.is_symlink():raise RuntimeError('Settings symlink refused')
   if path.exists():

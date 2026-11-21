@@ -17,12 +17,12 @@
 
 | 应用 | 能力 | 对应容器 |
 | --- | --- | --- |
-| Immich 相册 | 照片与视频，独立智能检索开关，专属数据库容量 | immich-server、database、cache、immich-machine-learning |
+| Immich 相册 | 照片与视频，独立智能检索开关 | immich-server、cache、immich-machine-learning |
 | 文件浏览 | 网页下载与 SMB 只读挂载 | files、smb |
 | 共享同步盘 | 完整副本、设备绑定、暂停、进度、冲突及历史恢复 | syncthing |
-| 私人知识库 | Markdown 与附件阅读 | knowledge |
+| Joplin 笔记 | 离线客户端写作、标签与附件同步；网页管理账户 | joplin |
 | Git 仓库 | SSH 授权状态、仓库地址、推送与拉取 | git |
-| 基础服务 | 管理、认证与私人远程连接 | meta、tailscale |
+| 基础服务 | 管理、私人远程连接与共享 PostgreSQL | meta、tailscale、database |
 
 相册关闭时智能检索不可单独启动，重新开启恢复保存的设置。前端操作逻辑应用与功能，不需要感知功能对应容器还是配置项。基础服务由主机维护，网页不允许停用，以免管理入口失联。
 
@@ -37,7 +37,7 @@
 - WSL 部署仅读取 WSL 可见的 CPU 与内存上限，不读取 Windows 整机资源；普通 Linux 同样按宿主可见资源统计。
 - NAS 数据盘及本机存储盘显示所在卷整体用量，包含其他文件。本机存储盘承载数据库、运行数据及本机快照，不代表专用备份分区。
 - 采样失败显示未知，不伪造 NAS 用量为 0。分项与总量读取存在很短的采样时差，图层独立绘制，不能将两层宽度相加。
-- 相册数据库内部用量及稀疏镜像分配仍只放在相册展开栏。
+- 共享数据库内部用量及稀疏镜像分配放在基础服务展开栏，包含 Immich 与 Joplin。
 
 计账参考：[Linux cgroup v2](https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html) 与 [/proc 统计](https://www.kernel.org/doc/html/latest/filesystems/proc.html)。
 
@@ -54,10 +54,11 @@ WSL2 使用宿主 Windows 的物理 CPU 和内存；虚拟 CPU 由宿主调度�
 | immich | immich-server |
 | git | git |
 | shared | syncthing |
-| knowledge | 主机管理员 |
+| knowledge | 主机管理员（旧资料保留） |
+| joplin | joplin |
 | 未登记路径 | 无应用写入者 |
 
-折叠行只显示该应用实际拥有写权限的目录，省略 data/ 前缀；只读应用显示“无写入目录”。知识库的目录由主机管理员维护，不冒充知识库应用自身的写权限。首页没有完整权限表或任意路径继承查询；后端继续检查实际 Compose 和 Docker 挂载，拒绝错误写入者、跨所有者的可写父目录、未登记读取服务和链接挂载。宿主机管理员不受容器规则限制。
+折叠行只显示该应用实际拥有写权限的目录，省略 data/ 前缀；只读应用显示“无写入目录”。旧 knowledge 目录继续保留，由主机管理员维护；Joplin 独占写入自己的 joplin 目录。首页没有完整权限表或任意路径继承查询；后端继续检查实际 Compose 和 Docker 挂载，拒绝错误写入者、跨所有者的可写父目录、未登记读取服务和链接挂载。宿主机管理员不受容器规则限制。
 
 共享客户端允许多设备编辑，由 Syncthing 统一维护 NAS 上 shared；历史恢复是持有生命周期锁且暂停共享后生成新副本的维护例外。
 
@@ -74,3 +75,5 @@ WSL2 使用宿主 Windows 的物理 CPU 和内存；虚拟 CPU 由宿主调度�
 登录、退出、刷新或页面切换均不执行启停。运行选择保存在 system/state/desired-modules.json。更新前端只重建管理容器，沿用既有应用选择。
 
 只读验证入口：tests/verify-meta-status.py（页面契约与实际 JavaScript）、tests/verify-meta-browser.ps1（独立 Chrome、桌面与手机布局）；协议级连接行为由 tests/verify-connect-js.py 验证。测试不依赖相册已开启，不自动启动业务服务。
+
+共享数据库的生命周期、账户隔离、备份及客户端配置见 [Joplin 与共享数据库](JOPLIN.md)。配置键 `knowledge` 保留兼容现有启动选择，实际对应容器为 `joplin`；不自动导入或删除旧 Markdown。

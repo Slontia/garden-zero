@@ -63,7 +63,7 @@ class Snapshot:
      self.entries[name]={'kind':'file','size':member.size,'sha256':h.hexdigest()};self.refs[name]=member;self.times[name]=member.mtime
     else:raise RuntimeError('Symlinks, hardlinks and special archive members are not mirrored')
    self.entries['recovery']={'kind':'dir'}
-   for name in ('database.dump','configuration.tar','manifest.json','COMPLETE'):
+   for name in sorted((set(manifest['files'])-{'user-content.tar'})|{'manifest.json','COMPLETE'}):
     p=self.path/name;key='recovery/'+name;self.entries[key]={'kind':'file','size':p.stat().st_size,'sha256':digest_file(p)};self.refs[key]=p;self.times[key]=p.stat().st_mtime
    folded=set()
    for name in self.entries:

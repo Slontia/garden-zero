@@ -37,13 +37,24 @@ try:
   if subprocess.run(D+['exec',name,'pg_isready','-h','127.0.0.1','-U','postgres','-d','immich'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0:break
   time.sleep(1)
  else:raise RuntimeError('Restore DB readiness timeout')
- with (backup/'database.dump').open('rb') as f:command(D+['exec','-i',name,'pg_restore','--exit-on-error','-U','postgres','-d','immich'],stdin=f)
- query="SELECT table_schema||'.'||table_name FROM information_schema.tables WHERE table_schema='public' ORDER BY 1"
- restored=capture(D+['exec',name,'psql','-U','postgres','-d','immich','-Atc',query])
- if db_signature(name)!=manifest.get('tables'):raise RuntimeError('Restored table counts do not match backup')
+ databases=manifest.get('databases',{'immich':{'dump':'database.dump','tables':manifest.get('tables')}})
+ if set(databases)-{'immich','joplin'}:raise RuntimeError('Unregistered database in restore manifest')
+ if 'database-roles.sql' in manifest['files']:
+  # Existing bootstrap role is retained; application roles are restored without passwords.
+  roles=(backup/'database-roles.sql').read_text().replace('CREATE ROLE postgres;','')
+  subprocess.run(D+['exec','-i',name,'psql','-v','ON_ERROR_STOP=1','-U','postgres','-d','postgres'],input=roles,text=True,check=True,stdout=subprocess.DEVNULL)
+ restored={}
+ for database,entry in databases.items():
+  if entry['dump'] not in manifest['files'] or Path(entry['dump']).name!=entry['dump']:raise RuntimeError('Unverified database dump')
+  if database!='immich':command(D+['exec',name,'createdb','-U','postgres',database])
+  with (backup/entry['dump']).open('rb') as f:command(D+['exec','-i',name,'pg_restore','--exit-on-error','-U','postgres','-d',database],stdin=f)
+  if 'database-roles.sql' in manifest['files']:
+   command(D+['exec',name,'psql','-v','ON_ERROR_STOP=1','-U','postgres','-d','postgres','-c',f'ALTER DATABASE {database} OWNER TO {database}; REVOKE ALL ON DATABASE {database} FROM PUBLIC;'])
+  if db_signature(name,database)!=entry['tables']:raise RuntimeError('Restored table counts do not match backup: '+database)
+  restored[database]=entry['tables']
  with tarfile.open(backup/'user-content.tar') as tar:tar.extractall(work/'content',filter='data')
  with tarfile.open(backup/'configuration.tar') as tar:tar.extractall(work/'configuration',filter='data')
- report={'backup':str(backup),'restore_image':str(image),'database_tables':restored.splitlines(),'table_counts_match':True,'state':'PASS','checks':['archive checksums','independent internal-disk database restore','safe user-content extraction','configuration extraction'],'limitations':['Not cross-host disaster recovery','User-content application relations require media upload acceptance']}
+ report={'backup':str(backup),'restore_image':str(image),'database_tables':restored,'table_counts_match':True,'state':'PASS','checks':['archive checksums','independent internal-disk database restore','safe user-content extraction','configuration extraction'],'limitations':['Not cross-host disaster recovery','User-content application relations require media upload acceptance']}
  (work/'result.json').write_text(json.dumps(report,indent=2));print('PASS: backup checksums and independent restore. Evidence: '+str(work/'result.json'))
 finally:
  if created:

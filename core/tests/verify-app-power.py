@@ -7,7 +7,7 @@ _nas_sys.path.insert(0,str(_NasPath(__file__).resolve().parents[1]/'scripts'))
 import http.cookiejar,json,subprocess,sys,time,urllib.request,urllib.error
 from pathlib import Path
 from nasctl import cfg,DOCKER,inventory
-c=cfg();initial=inventory(c);before={r['service']:r for r in initial};active=before.get('knowledge',{}).get('state')=='running';checks=[]
+c=cfg();initial=inventory(c);before={r['service']:r for r in initial};active=before.get('joplin',{}).get('state')=='running';checks=[]
 def session():return urllib.request.build_opener(urllib.request.ProxyHandler({}),urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
 op=session()
 def request(path,data=None):
@@ -28,7 +28,7 @@ try:
  assert s['modules']['knowledge']['state']=='stopped' and selection()==stopped;checks.append('logout and new login do not start stopped service')
  subprocess.run(['sudo','-n','systemctl','restart','nas-agent.service'],check=True)
  s=request('/api/status');assert s['modules']['knowledge']['state']=='stopped' and selection()==stopped;checks.append('controller restart preserves stopped choice')
- assert all(r['state']==before[r['service']]['state'] for r in inventory(c) if r['service']!='knowledge');checks.append('all unrelated container states unchanged')
+ assert all(r['state']==before[r['service']]['state'] for r in inventory(c) if r['service']!='joplin');checks.append('all unrelated container states unchanged')
  if active:
   request('/api/action',{'action':'app-power','app':'knowledge','enabled':True});s=request('/api/status');assert s['modules']['knowledge']['state']=='ready';checks.append('actual service starts and becomes healthy')
   running=selection();request('/api/logout',{});op=session();login();assert request('/api/status')['modules']['knowledge']['state']=='ready' and selection()==running;checks.append('new login preserves running service')
@@ -36,9 +36,9 @@ try:
  assert request('/api/status')['data_access']['state']=='verified';checks.append('live data mounts match registered owners')
 finally:
  current={r['service']:r for r in inventory(c)}
- if active and current.get('knowledge',{}).get('state')!='running':subprocess.run(['sudo','-n',sys.executable,str(Path(c['host'])/'installed/nasctl.py'),'start','knowledge'],check=True)
- elif not active and current.get('knowledge',{}).get('state')=='running':request('/api/action',{'action':'app-power','app':'knowledge','enabled':False})
+ if active and current.get('joplin',{}).get('state')!='running':subprocess.run(['sudo','-n',sys.executable,str(Path(c['host'])/'installed/nasctl.py'),'start','knowledge'],check=True)
+ elif not active and current.get('joplin',{}).get('state')=='running':request('/api/action',{'action':'app-power','app':'knowledge','enabled':False})
  request('/api/logout',{})
-report={'state':'PASS','checks':checks,'scope':'knowledge container only; normal full host reboot not exercised'}
+report={'state':'PASS','checks':checks,'scope':'Joplin container only; normal full host reboot not exercised'}
 (Path(c['root'])/'system/runtime/acceptance/app-power.json').write_text(json.dumps(report,indent=2))
 print('PASS:',len(checks),'live power/authentication/persistence checks; initial state restored')

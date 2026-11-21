@@ -7,7 +7,7 @@ from pathlib import Path
 from nas_policy import backup_due,backup_summary,mirror_due
 CONFIG=Path(os.environ.get('NAS_HOST_CONFIG','/mnt/c/nas/system/config/config.json'))
 DOCKER=['/usr/bin/docker','--host','unix:///var/run/docker.sock']
-MODULES={'immich':['immich-server','database','cache'],'ml':['immich-machine-learning'],'meta':['meta'],'files':['files'],'knowledge':['knowledge'],'git':['git'],'smb':['smb'],'syncthing':['syncthing'],'tailscale':['tailscale']}
+MODULES={'immich':['immich-server','cache'],'postgres':['database'],'ml':['immich-machine-learning'],'meta':['meta'],'files':['files'],'knowledge':['joplin'],'git':['git'],'smb':['smb'],'syncthing':['syncthing'],'tailscale':['tailscale']}
 WRITER=None
 LOCK_ROOT=Path('/run/nas')
 _APP_OPERATIONS={};_APP_OPERATIONS_LOCK=threading.Lock()
@@ -53,6 +53,13 @@ def application_lock(app,operation):
 
 def application_operations():
  with _APP_OPERATIONS_LOCK:return {key:dict(value) for key,value in _APP_OPERATIONS.items()}
+
+@contextlib.contextmanager
+def database_lock():
+ LOCK_ROOT.mkdir(mode=0o750,exist_ok=True)
+ with open(LOCK_ROOT/'postgres.lock','a') as stream:
+  fcntl.flock(stream,fcntl.LOCK_EX)
+  yield
 
 def volume(c):
  if not Path(c['root']).is_dir() or not Path(c['data']).is_dir():raise RuntimeError('NAS SSD/data directory missing')
@@ -131,7 +138,7 @@ def desired_state(c):
   modules=[m for m in legacy if m not in disabled]
   state={'schema':1,'modules':modules,'ml_preference':'ml' in modules}
  if state.get('schema')!=1 or not isinstance(state.get('modules'),list) or any(m not in MODULES for m in state['modules']):raise RuntimeError('Invalid persisted service selection')
- state={**state,'modules':list(dict.fromkeys(state['modules']+['meta','tailscale']))}
+ state={**state,'modules':list(dict.fromkeys(state['modules']+['meta','tailscale','postgres']))}
  if 'immich' not in state['modules']:state['modules']=[m for m in state['modules'] if m!='ml']
  return state
 
@@ -144,7 +151,7 @@ def _remember(c,modules,enabled):
  state=desired_state(c);selection=set(state['modules'])
  selection.update(modules) if enabled else selection.difference_update(modules)
  if 'ml' in modules and ('immich' not in modules or enabled):state['ml_preference']=enabled
- state['modules']=[m for m in MODULES if m in selection or m in ('meta','tailscale')]
+ state['modules']=[m for m in MODULES if m in selection or m in ('meta','tailscale','postgres')]
  path=Path(c['host'])/'state/desired-modules.json'
  fd,tmp=tempfile.mkstemp(prefix='.desired-',dir=path.parent)
  try:
@@ -183,11 +190,20 @@ def start(c,module,enable_all=False):
  if 'meta' in modules:run(['systemctl','start','nas-agent.service'],stdout=subprocess.DEVNULL)
  if infra:
   compose(c,'up','-d','--no-build',*sum([MODULES[m] for m in infra],[]))
- if any(m in ('immich','ml') for m in modules):mount(c)
+ if any(m in ('immich','ml','knowledge','postgres') for m in modules):
+  mount(c)
+  with database_lock():
+   compose(c,'up','-d','--no-build','--wait','--wait-timeout','120','database')
+   wait_services(c,['database'])
+   from nas_database import provision
+   provision(c)
  if any(m in BUSINESS for m in modules):volume(c)
  services=sum([MODULES[m] for m in modules],[])
  if services:compose(c,'up','-d','--no-build','--wait','--wait-timeout','240',*services)
  if services:wait_services(c,services)
+ if 'knowledge' in modules:
+  from nas_joplin import prepare
+  prepare(c)
  if 'meta' in modules:
   from nas_ready import wait_meta_ready
   wait_meta_ready(c,modules)
@@ -216,7 +232,7 @@ def stop(c,module,remember_selection=True):
  audit(c,'stop',modules)
 
 def unmount(c):
- if any(x['service'] in ('database','immich-server','immich-machine-learning') and x['state']=='running' for x in inventory(c)):raise RuntimeError('Database consumers still running')
+ if any(x['service'] in ('database','immich-server','immich-machine-learning','joplin') and x['state']=='running' for x in inventory(c)):raise RuntimeError('Database consumers still running')
  for row in inventory(c):
   if row['service']=='database' and row['exit_code']!=0:raise RuntimeError('Unclean database exit; refusing unmount')
  if mounted(c):
@@ -250,6 +266,7 @@ def status(c):
  except OSError:pass
  from nas_resources import snapshot as resource_snapshot
  result['resources']=resource_snapshot(c['project'],inspected if 'inspected' in locals() else None)
+ result['joplin']=read_state(c,'joplin-account.json',{'state':'not_configured'})
  result['operations']=application_operations()
  result['storage_blocked']=(Path(c['host'])/'state/deployment-blocked').exists()
  result['backup']=backup_summary(c,read_state(c,'backup.json',{'state':'not_run'}),datetime.datetime.now(),read_state(c,'schedules.json',{'backup':True}).get('backup',True))
@@ -312,14 +329,14 @@ def read_state(c,name,default):
  try:return json.loads(p.read_text())
  except (OSError,ValueError):return default
 
-def db_signature(container):
- names=output(DOCKER+['exec',container,'psql','-U','postgres','-d','immich','-Atc',"SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename"]).splitlines()
+def db_signature(container,database='immich'):
+ names=output(DOCKER+['exec',container,'psql','-U','postgres','-d',database,'-Atc',"SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename"]).splitlines()
  if not names:return {}
  chunks=[]
  for name in names:
   ident='"'+name.replace('"','""')+'"';literal="'"+name.replace("'","''")+"'"
   chunks.append('SELECT '+literal+" || ':' || count(*)::text FROM public."+ident)
- text=output(DOCKER+['exec',container,'psql','-U','postgres','-d','immich','-Atc',' UNION ALL '.join(chunks)])
+ text=output(DOCKER+['exec',container,'psql','-U','postgres','-d',database,'-Atc',' UNION ALL '.join(chunks)])
  return dict(line.rsplit(':',1) for line in text.splitlines())
 
 def data_tree(root):
@@ -353,7 +370,7 @@ def backup(c):
  try:
   inv={x['service']:x for x in inventory(c)}
   if inv.get('database',{}).get('state')!='running':raise RuntimeError('Database stopped: backup skipped, no fresh success')
-  for module in ['immich','git','syncthing']:
+  for module in ['immich','knowledge','git','syncthing']:
    active=[s for s in MODULES[module] if s not in ('database','cache') and inv.get(s,{}).get('state')=='running']
    if active:
     compose(c,'stop','--timeout','90',*active);paused+=active
@@ -361,6 +378,13 @@ def backup(c):
     if any(stopped[s]['state']!='exited' or stopped[s]['exit_code']==137 for s in active):raise RuntimeError('Backup writer did not stop cleanly')
   with (stage/'database.dump').open('wb') as f:
    subprocess.run(DOCKER+['exec','nas-database-1','pg_dump','-U','postgres','-d','immich','-Fc'],stdout=f,check=True)
+  databases={'immich':{'dump':'database.dump','tables':db_signature(c['project']+'-database-1')}}
+  if (Path(c['host'])/'config/joplin.env').exists() or (Path(c['host'])/'state/shared-postgres.json').exists():
+   with (stage/'joplin.dump').open('wb') as f:
+    subprocess.run(DOCKER+['exec',c['project']+'-database-1','pg_dump','-U','postgres','-d','joplin','-Fc'],stdout=f,check=True)
+   databases['joplin']={'dump':'joplin.dump','tables':db_signature(c['project']+'-database-1','joplin')}
+   with (stage/'database-roles.sql').open('wb') as f:
+    subprocess.run(DOCKER+['exec',c['project']+'-database-1','pg_dumpall','-U','postgres','--roles-only','--no-role-passwords'],stdout=f,check=True)
   # Stop business writers before snapshotting application-managed media and repositories.
   before=data_tree(c['data'])
   with tarfile.open(stage/'user-content.tar','w') as tar:
@@ -368,20 +392,20 @@ def backup(c):
   if before!=data_tree(c['data']):raise RuntimeError('User content changed during backup; refusing a COMPLETE snapshot')
   with tarfile.open(stage/'configuration.tar','w') as tar:
    tar.add(Path(c['host'])/'config',arcname='system/config');tar.add(Path(c['host'])/'secrets',arcname='system/secrets',filter=lambda m:None if m.name.endswith('/hdd-mirror-key') else m)
-   for filename in ('desired-modules.json','autostart.json','disabled.json','schedules.json','remote.json'):
+   for filename in ('desired-modules.json','autostart.json','disabled.json','schedules.json','remote.json','shared-postgres.json','joplin-account.json'):
     p=Path(c['host'])/'state'/filename
     if p.is_file():tar.add(p,arcname='system/state/'+filename)
    for directory in ('web','scripts','tests','services','templates','host','docs','compose'):
     tar.add(Path(c['root'])/'core'/directory,arcname='core/'+directory,filter=lambda m:None if '__pycache__' in m.name else m)
    for filename in ('README.md','deploy.sh','start.sh','stop.sh','start.ps1','stop.ps1','.env.example','.gitignore','.gitattributes'):
     tar.add(Path(c['root'])/'core'/filename,arcname='core/'+filename)
-   for filename in ('README.md','LICENSE','.gitignore','.gitattributes','.editorconfig','CONTRIBUTING.md','SECURITY.md','THIRD_PARTY_NOTICES.md'):
+   for filename in ('README.md','LICENSE','.gitignore','.gitattributes','.editorconfig','CONTRIBUTING.md','AGENTS.md','SECURITY.md','THIRD_PARTY_NOTICES.md'):
     p=Path(c['root'])/filename
     if p.is_file():tar.add(p,arcname='project/'+filename)
    tar.add(Path(c['host'])/'state/git',arcname='system/state/git');tar.add(Path(c['host'])/'state/tailscale',arcname='system/state/tailscale')
    for filename in ('config.xml','cert.pem','key.pem','https-cert.pem','https-key.pem'):
     tar.add(Path(c['host'])/'state/syncthing'/filename,arcname='system/state/syncthing/'+filename)
-  manifest={'schema':2,'layout':'data-core-system','project':c['project'],'scope':'database-user-content-configuration-deploy','time':stamp,'database':'immich','image_uuid':c['image_uuid'],'tables':db_signature('nas-database-1'),'files':{}}
+  manifest={'schema':3,'databases':databases,'layout':'data-core-system','project':c['project'],'scope':'database-user-content-configuration-deploy','time':stamp,'database':'immich','image_uuid':c['image_uuid'],'tables':db_signature('nas-database-1'),'files':{}}
   for p in stage.iterdir():
    h=hashlib.sha256()
    with p.open('rb') as f:
@@ -444,8 +468,8 @@ def action(c,data):
   with lock():start(c,'all',enable_all=True)
  elif operation in ('start','stop','restart'):
   if module not in MODULES and module not in ('all','business'):raise RuntimeError('Invalid module')
-  if operation in ('stop','restart') and module in ('meta','tailscale','all'):raise RuntimeError('管理与远程连接由主机维护，不能在网页中关闭')
-  if operation=='restart' and module in ('meta','tailscale','all','business'):raise RuntimeError('Restart this infrastructure module through the host CLI')
+  if operation in ('stop','restart') and module in ('meta','tailscale','postgres','all'):raise RuntimeError('管理与远程连接由主机维护，不能在网页中关闭')
+  if operation=='restart' and module in ('meta','tailscale','postgres','all','business'):raise RuntimeError('Restart this infrastructure module through the host CLI')
   with lock():
    if operation in ('stop','restart'):stop(c,module)
    if operation in ('start','restart'):start(c,module)

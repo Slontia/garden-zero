@@ -18,7 +18,7 @@ def rejects(name,fn):
 modules={m:{'state':'ready','containers':[{'service':s,'state':'running','health':'healthy'} for s in services]} for m,services in n.MODULES.items()}
 apps=a.snapshot({},modules,{'ml_preference':True})
 check('six applications cover all eleven services',len(apps)==6 and sum(len(x['services']) for x in apps.values())==11)
-check('log tabs expose registered per-application sources',{x['id'] for x in apps['immich']['log_sources']}=={'immich-server','database','cache','immich-machine-learning'})
+check('log tabs expose registered per-application sources',{x['id'] for x in apps['immich']['log_sources']}=={'immich-server','cache','immich-machine-learning'})
 check('intelligence is a logical feature not a separate app',apps['immich']['features'][0]['id']=='intelligence' and 'ml' not in apps)
 modules['immich']={'state':'stopped','containers':[]};modules['ml']={'state':'stopped','containers':[]}
 app=a.snapshot({},modules,{'ml_preference':True})['immich'];check('stopped parent retains preference but disables feature',not app['features'][0]['available'] and app['features'][0]['enabled'] and not app['features'][0]['active'])

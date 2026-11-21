@@ -24,3 +24,5 @@ Linux 的 socket、生命周期锁、ext4 挂载点仍在 /run，不迁移共享
 回滚材料位于 system/archive/local/directory-migration-20261121-201206；旧 SSD 文件位于 system/archive/layout-v1-20261121-201206。运行后回滚还须先正常停机并保存最新数据，不得直接覆盖已重新运行的数据库。
 
 验证入口：从 core 执行 python3 -B tests/verify-layout.py；详细本机验收记录在 system/runtime/acceptance。迁移工具、原始日志和私有配置保留在 system/runtime/local，均不进入 Git。
+
+Joplin 用户内容与附件载荷位于 `data/joplin/`，由 joplin 容器独占写入；旧 `data/knowledge/` 保留。Immich 与 Joplin 的数据库共用现有 PostgreSQL 镜像文件，仍位于配置指定的本机 system 目录；不为路径中历史的 immich 名称搬动正在使用的镜像。

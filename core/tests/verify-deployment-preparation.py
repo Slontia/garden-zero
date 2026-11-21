@@ -22,7 +22,7 @@ def main():
  password=secrets.token_urlsafe(24)
  for name,value in {'admin-password.txt':password+'\n','postgres-password':secrets.token_hex(32),'smb-password':secrets.token_hex(24),'agent-token':secrets.token_hex(32),'admin.json':'{}'}.items():(host/'secrets'/name).write_text(value)
  f={**c,'root':str(root),'host':str(host),'data':str(root/'data')};env=load('write-environment');services=load('prepare-services');installer=load('install-host');checks=[]
- env.generate(f);versions=json.loads((host/'config/versions.json').read_text());assert len(versions)==9;checks.append('nine local/pinned images resolve; private environment generated')
+ env.generate(f);versions=json.loads((host/'config/versions.json').read_text());assert len(versions)==10;checks.append('ten local/pinned images resolve; private environment generated')
  lockpath=root/'core/templates/versions.lock.json';original_lock=lockpath.read_bytes();invalid=json.loads(original_lock);invalid.pop('RESTIC_IMAGE');lockpath.write_text(json.dumps(invalid));original_env=(host/'config/compose.env').read_bytes()
  try:
   try:env.generate(f)

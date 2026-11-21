@@ -1,5 +1,5 @@
 
-const names={meta:'零号庭院管理',tailscale:'私人远程连接',immich:'Immich 相册',ml:'相册机器学习',files:'文件浏览',knowledge:'私人知识库',git:'Git SSH',smb:'SMB 只读共享',syncthing:'共享同步盘'};
+const names={meta:'零号庭院管理',tailscale:'私人远程连接',immich:'Immich 相册',ml:'相册机器学习',files:'文件浏览',knowledge:'Joplin 笔记',git:'Git SSH',smb:'SMB 只读共享',syncthing:'共享同步盘'};
 const states={unavailable:'状态未知',ready:'应用就绪',stopped:'已停止',starting:'启动中 / 就绪未确认',fault:'故障',pending_memory:'待启用：内存限制',login_required:'等待账户授权',pairing_required:'等待目录或设备配对'};
 function label(state){return ({interrupted:'备份未完成，等待续传',success:'成功',success_with_resume_error:'备份成功，但业务恢复失败',running:'进行中',failed:'失败',skipped:'跳过（业务已停止）',not_run:'尚未运行',observing:'观察中',fault:'异常',paused:'已暂停','24h_probes_passed':'24 小时探针通过',awaiting_folder:'等待选择同步目录',awaiting_pairing:'等待设备配对',configured:'已配置',unavailable:'不可用',not_configured:'待配置',not_connected:'未接入',Running:'已连接',login_required:'等待授权'})[state]||state||'暂无记录'}
 function node(tag,text,cls){let n=document.createElement(tag);n.textContent=text||'';if(cls)n.className=cls;return n}

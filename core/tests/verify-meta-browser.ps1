@@ -76,7 +76,7 @@ try {
     Start-Sleep -Milliseconds 2200
     if ((Evaluate "document.querySelector('#resource-uptime').textContent") -eq $before) { throw 'Uptime does not tick' }
     if ((Evaluate "(()=>{let ids=['resource-cpu','resource-memory','resource-nas-disk','resource-local-disk'],r=ids.map(id=>document.getElementById(id).getBoundingClientRect());return r.every(x=>Math.abs(x.top-r[0].top)<2)&&!document.querySelector('#resource-disks')&&document.querySelectorAll('.composite-meter').length===2})()") -ne $true) { throw 'Four-column composite resource layout failed' }
-    $pathsOk = Evaluate "(()=>{for(let [app,path]of [['immich','immich/'],['git','git/'],['syncthing','shared/']]){let card=document.querySelector('#app-'+app);if(card.open||card.querySelector('summary .write-path code')?.textContent!==path)return false}return !document.querySelector('#app-knowledge summary .write-path')&&!document.querySelector('#app-files summary .write-path')})()"
+    $pathsOk = Evaluate "(()=>{for(let [app,path]of [['immich','immich/'],['git','git/'],['syncthing','shared/'],['knowledge','joplin/']]){let card=document.querySelector('#app-'+app);if(card.open||card.querySelector('summary .write-path code')?.textContent!==path)return false}return !document.querySelector('#app-files summary .write-path')})()"
     if (-not $pathsOk) { throw 'Collapsed writable paths or read-only app attribution mismatch' }
     $position = Evaluate "(()=>{let b=document.querySelector('#app-immich .write-path-icon');let r=b.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()"
     Invoke-CDP 'Input.dispatchMouseEvent' @{type='mouseMoved';x=$position.x;y=$position.y} | Out-Null
@@ -104,7 +104,7 @@ try {
     Navigate '/containers' "document.querySelectorAll('#system-rows tr').length===11"
     Check-Navigation '/containers'
     Evaluate "document.querySelector('#system-filter').value='immich';renderSystem()" | Out-Null
-    if ((Evaluate "document.querySelectorAll('#system-rows tr').length===4") -ne $true) { throw 'Container application filter failed' }
+    if ((Evaluate "document.querySelectorAll('#system-rows tr').length===3") -ne $true) { throw 'Container application filter failed' }
     Screenshot 'containers-desktop'
     Navigate '/logs' "document.querySelector('#log-output')?.dataset.loaded==='true'"
     Check-Navigation '/logs'

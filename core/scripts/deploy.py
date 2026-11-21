@@ -22,7 +22,7 @@ def account(c):
 def check_ports(c):
  # Enforce single-instance deployment and do not take over another application.
  import socket
- expected={'meta':8080,'files':8081,'knowledge':8082,'immich-server':2283,'git':2222,'syncthing':8384,'smb':1445}
+ expected={'meta':8080,'files':8081,'joplin':8082,'immich-server':2283,'git':2222,'syncthing':8384,'smb':1445}
  ids=subprocess.check_output(DOCKER+['ps','-q'],text=True).split()
  infos=json.loads(subprocess.check_output(DOCKER+['inspect']+ids,text=True)) if ids else []
  for service,port in expected.items():

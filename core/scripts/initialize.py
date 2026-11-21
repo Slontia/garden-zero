@@ -59,7 +59,7 @@ def initialize(p):
   with os.fdopen(fd,'w') as f:f.write(value)
  c={'schema':1,'project':'nas','root':str(ROOT),'core':str(ROOT/'core'),'system':str(ROOT/'system'),'host':str(host),'backup_root':p['backup_root'],'image':str(image),'image_uuid':fs_uuid,'database_location':p['database_location'],'critical_image_outer_free':16*1024**3,'mount':'/run/nas/database','volume_guid':p['volume_guid'],'volume_drive':p['drive'],'data':str(ROOT/'data'),'enabled':['immich','files','knowledge','git','smb','syncthing','tailscale','meta','backup','cloud','hdd','ml'],'autostart':['meta','files','knowledge','immich','git','smb','syncthing','tailscale','ml'],'ml_enabled':True,'ports':{'meta':8080,'files':8081,'knowledge':8082,'immich':2283,'git':2222,'syncthing':8384,'smb':1445},'backup_hour':3,'backup_keep':14,'critical_outer_free':16*1024**3,'cloud_repository':None,'hdd_root':None,'sync_target':'mac','sync_folders_pending':True,'file_access':{'mode':'full_sync','write_roots':['shared'],'writer_selection':'disabled','implemented':True}}
  for path in ['logs','runtime','backups','installed','config','state/meta','state/syncthing','state/tailscale','state/git','state/smb','cache/ml','state/cloud']:(host/path).mkdir(parents=True,exist_ok=True)
- for path in ['immich','git','knowledge/articles','knowledge/assets','shared']:(ROOT/'data'/path).mkdir(parents=True,exist_ok=True)
+ for path in ['immich','git','knowledge/articles','knowledge/assets','joplin','shared']:(ROOT/'data'/path).mkdir(parents=True,exist_ok=True)
  (host/'config').mkdir(parents=True,exist_ok=True)
  with config.open('x') as f:json.dump(c,f,indent=2)
 

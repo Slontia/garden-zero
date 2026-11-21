@@ -54,24 +54,38 @@ services:
         target: /credentials/admin.json
         read_only: true
         bind: {create_host_path: false}
-  knowledge:
-    <<: *web
+  joplin:
     profiles: [knowledge]
-    environment: {NAS_MODE: knowledge}
-    ports: ['127.0.0.1:8082:8080']
+    image: ${JOPLIN_IMAGE}
+    restart: 'no'
+    environment:
+      APP_PORT: '22300'
+      DB_CLIENT: pg
+      POSTGRES_HOST: database
+      POSTGRES_PORT: '5432'
+      POSTGRES_USER: joplin
+      POSTGRES_DATABASE: joplin
+      STORAGE_DRIVER: 'Type=Filesystem; Path=/data'
+    env_file: ['${NAS_HOST}/config/joplin.env']
+    ports: ['127.0.0.1:8082:22300']
     volumes:
       - type: bind
-        source: ${NAS_DATA}/knowledge
+        source: ${NAS_DATA}/joplin
         target: /data
-        read_only: true
         bind: {create_host_path: false}
-      - type: bind
-        source: ${NAS_HOST}/secrets/admin.json
-        target: /credentials/admin.json
-        read_only: true
-        bind: {create_host_path: false}
+    depends_on:
+      database: {condition: service_healthy}
+    security_opt: ['no-new-privileges:true']
+    cap_drop: [ALL]
+    mem_limit: 512m
+    logging: *logging
+    healthcheck:
+      test: [CMD, node, -e, "require('http').get('http://127.0.0.1:22300/api/ping',{headers:{Host:new URL(process.env.APP_BASE_URL).host}},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      start_period: 60s
   database:
-    profiles: [immich]
+    profiles: [postgres, immich, knowledge]
     image: ${POSTGRES_IMAGE}
     restart: 'no'
     environment:
@@ -113,7 +127,7 @@ services:
     restart: 'no'
     environment:
       DB_HOSTNAME: database
-      DB_USERNAME: postgres
+      DB_USERNAME: immich
       DB_DATABASE_NAME: immich
       REDIS_HOSTNAME: cache
       IMMICH_CONFIG_FILE: /config/immich.json

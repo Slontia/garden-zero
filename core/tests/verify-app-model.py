@@ -46,7 +46,7 @@ with tempfile.TemporaryDirectory() as tmp:
  check('stopping app preserves ML feature preference',n.desired_state(c)['ml_preference'] is True)
  n.remember(c,['immich','ml'],True);n.remember(c,['ml'],False)
  check('ML preference can remain off while album remains on','immich' in n.autostart(c) and 'ml' not in n.autostart(c) and not n.desired_state(c)['ml_preference'])
- with patch.object(n,'output',return_value='{"services":{}}'),patch.object(n,'compose'),patch.object(n,'mount'),patch.object(n,'volume'),patch.object(n,'wait_services'),patch.object(n,'audit'):n.start(c,'immich')
+ with patch.object(n,'output',return_value='{"services":{}}'),patch.object(n,'compose'),patch.object(n,'mount'),patch.object(n,'volume'),patch.object(n,'wait_services'),patch.object(n,'audit'),patch.object(n,'database_lock',__import__('contextlib').nullcontext),patch('nas_database.provision'):n.start(c,'immich')
  check('starting album honors remembered ML preference','ml' not in n.autostart(c))
  rejects('web cannot stop management connection',lambda:n.action(c,{'action':'stop','module':'tailscale'}))
  rejects('legacy autostart mutation is removed',lambda:n.action(c,{'action':'autostart','modules':list(n.MODULES)}))

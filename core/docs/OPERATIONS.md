@@ -4,7 +4,7 @@
 
 ## 日常运行
 
-Meta 查看磁盘、模块、备份及运行观察。普通文件的 SMB/网页入口保持只读；上传照片通过 Immich，提交仓库通过 Git SSH。Syncthing 的 shared 完整同步已接入 Mac；Meta 支持网页绑定/解绑、进度、冲突查看和历史恢复副本。网盘和 HDD 尚未接入。独占 SMB 写入已停用。
+Meta 查看磁盘、模块、备份及运行观察。Joplin 笔记与 Immich 共用 PostgreSQL，角色和数据库隔离；数据库现为基础服务，不随相册关闭。普通文件的 SMB/网页入口保持只读；上传照片通过 Immich，提交仓库通过 Git SSH。Syncthing 的 shared 完整同步已接入 Mac；Meta 支持网页绑定/解绑、进度、冲突查看和历史恢复副本。网盘和 HDD 尚未接入。独占 SMB 写入已停用。
 
 “应用就绪”表示服务健康，不代表设备配对、远端账户、长期负载或备份恢复全部验收通过。相册 ML 首次加载模型可能较慢；当前限制 3 GiB、单请求线程，空闲 120 秒卸载模型。大批量上传仍需观察内存及队列。
 
@@ -117,3 +117,7 @@ Windows 登录入口即使发现 nas-session 已 active，也会再次执行只�
 ## 工作空间页面
 
 应用 /apps、备份 /backups、容器 /containers、日志 /logs 独立导航。资源概览是 WSL 整体统计，运行时间用 HH:MM:SS；磁盘空间不在备份页重复展示。应用详情只列写入归属，Git SSH 授权状态和地址也在 Git 展开栏。所有已登记 NAS 服务按需获得 data 的只读授权，唯一写入与安全挂载核对继续生效。
+
+## Joplin 与共享 PostgreSQL
+
+见 [接入与恢复说明](JOPLIN.md)。`knowledge` 启动选择现在对应 `joplin` 容器；旧 Markdown 目录保留。不得再用只包含 `database.dump` 的旧流程宣称已恢复全部笔记；新快照还包含 `joplin.dump`、无密码角色定义及 `user-content.tar` 中的 Joplin 文件载荷。

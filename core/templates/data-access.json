@@ -13,7 +13,8 @@
     "immich-machine-learning",
     "database",
     "cache",
-    "backup"
+    "backup",
+    "joplin"
   ],
   "rules": [
     {
@@ -40,7 +41,7 @@
       "readers": [
         "knowledge"
       ],
-      "purpose": "管理员在主机维护的 Markdown 与附件；网页只读"
+      "purpose": "保留的旧 Markdown 与附件；不再作为网页写作入口"
     },
     {
       "path": "shared",
@@ -51,6 +52,12 @@
         "writer": "restore",
         "condition": "仅历史恢复：取得生命周期锁并暂停 NAS 共享后生成新副本"
       }
+    },
+    {
+      "path": "joplin",
+      "writer": "joplin",
+      "readers": [],
+      "purpose": "Joplin 管理的笔记、图片与附件载荷；通过客户端同步，不直接编辑内部文件"
     }
   ]
 }

@@ -6,7 +6,7 @@ import argparse,json,os,subprocess
 from pathlib import Path
 from nasctl import cfg,DOCKER
 LOCAL={'NAS_WEB_IMAGE','NAS_SERVICES_IMAGE'}
-EXPECTED=LOCAL|{'IMMICH_SERVER_IMAGE','IMMICH_ML_IMAGE','POSTGRES_IMAGE','VALKEY_IMAGE','TAILSCALE_IMAGE','SYNCTHING_IMAGE','RESTIC_IMAGE'}
+EXPECTED=LOCAL|{'IMMICH_SERVER_IMAGE','IMMICH_ML_IMAGE','POSTGRES_IMAGE','VALKEY_IMAGE','TAILSCALE_IMAGE','SYNCTHING_IMAGE','RESTIC_IMAGE','JOPLIN_IMAGE'}
 def resolve(c):
  locks=json.loads((Path(c['root'])/'core/templates/versions.lock.json').read_text());versions={};missing=[]
  if set(locks)!=EXPECTED:raise RuntimeError('Incomplete or unexpected image lock manifest')
