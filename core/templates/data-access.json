@@ -1,9 +1,18 @@
 {
   "schema": 1,
-  "scope": "NAS 容器的数据挂载；不限制拥有宿主机权限的管理员",
+  "scope": "所有 NAS 应用按需只读访问 data；仅约束各路径的唯一常规写入者，不限制宿主机管理员",
   "readers": [
+    "meta",
+    "tailscale",
     "files",
     "smb",
+    "knowledge",
+    "git",
+    "syncthing",
+    "immich-server",
+    "immich-machine-learning",
+    "database",
+    "cache",
     "backup"
   ],
   "rules": [

@@ -215,8 +215,12 @@ def status(c):
   result['data_access']=snapshot(c,inspected)
  except Exception as error:result['data_access']={'state':'unavailable','rules':[],'mounts':[],'errors':[str(error)]}
 
- for name,key in [('ssd','root'),('backup','backup_root'),('database','mount')]:
+ for name,key in [('ssd','root'),('backup','backup_root'),('database','mount'),('mirror','hdd_root')]:
+  if name=='mirror' and not c.get(key):continue
   try:
+   if name=='mirror':
+    from nas_resources import windows_volume_usage
+    result['disk'][name]=windows_volume_usage(c[key],c.get('hdd_guid'));continue
    if name=='database':verify_mount(c)
    d=shutil.disk_usage(c[key]);result['disk'][name]={'total':d.total,'free':d.free,'used':d.used}
   except Exception:result['disk'][name]={'state':'unavailable'}

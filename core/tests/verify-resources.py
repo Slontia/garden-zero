@@ -22,4 +22,13 @@ s=snapshot();check('live scope distinguishes runtime from Windows and containers
 check('real CPU sample has bounded aggregate percentage',s['cpu']['state']=='ready' and 0<=s['cpu']['used_percent']<=100 and s['cpu']['logical_cores']>=1)
 check('real memory sample has coherent capacity',s['memory']['used_bytes']+s['memory']['available_bytes']==s['memory']['total_bytes'])
 check('real environment uptime available',isinstance(s['uptime_seconds'],int) and s['uptime_seconds']>0)
+from unittest.mock import patch
+import json,subprocess
+import nas_resources as resources
+resources._VOLUME_CACHE.clear()
+with patch.object(resources.subprocess,'check_output',return_value=json.dumps({'UniqueId':'Volume{fixture-volume}','Size':1000,'SizeRemaining':600})) as query:
+ check('Windows backup volume can be measured without mounting WSL drive',resources.windows_volume_usage('/mnt/z/nas-backup','fixture-volume')['used']==400)
+ resources.windows_volume_usage('/mnt/z/nas-backup','fixture-volume');check('Windows volume query is cached',query.call_count==1)
+ check('wrong Windows backup volume is not reported',resources.windows_volume_usage('/mnt/z/nas-backup','wrong-volume')['state']=='unavailable')
+check('invalid Windows drive path fails closed',resources.windows_volume_usage('/untrusted/path','fixture-volume')['state']=='unavailable')
 print('PASS:',len(checks),'runtime resource counter checks; no host settings changed')

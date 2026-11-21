@@ -112,3 +112,8 @@ Meta“多设备文件访问”显示 NAS 已知进度和每台在线设备的�
 启动先等待所选容器 healthy，再实际访问管理台：检查 HTTP 服务身份、临时登录、完整首页、宿主状态查询、Docker 可用性、挂载权限及本次启用模块的 ready 状态。检查通过才返回成功，探针登录后会退出，不改变应用运行选择。Meta 链路最多等待 120 秒，超时返回非零错误。
 
 Windows 登录入口即使发现 nas-session 已 active，也会再次执行只读的端到端就绪检查。手工检查可运行 `bash core/scripts/host-command.sh wait-ready`。该检查验证本机管理链路；外网 HTTPS 连通性仍需独立核验。
+
+
+## 工作空间页面
+
+应用 /apps、备份 /backups、容器 /containers、日志 /logs 独立导航。资源概览是 WSL 整体统计，运行时间用 HH:MM:SS；磁盘空间不在备份页重复展示。应用详情只列写入归属，Git SSH 授权状态和地址也在 Git 展开栏。所有已登记 NAS 服务按需获得 data 的只读授权，唯一写入与安全挂载核对继续生效。

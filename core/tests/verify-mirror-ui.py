@@ -2,10 +2,11 @@
 """Execute actual backup choice JavaScript with simulated DOM; no backup requests."""
 import sys
 sys.dont_write_bytecode=True
-import json,subprocess
+import json
+from js_runner import run_node
 from pathlib import Path
 root=Path(__file__).resolve().parents[2]
-script=(root/'core/web/dashboard.js').read_text()
+script=(root/'core/web/management.js').read_text()+(root/'core/web/backups.js').read_text()
 harness=r'''
 const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');const js=JSON.parse(fs.readFileSync(0,'utf8')).js;let opened=false,calls=[];
 const dialog={showModal(){opened=true},close(){opened=false}};
@@ -17,6 +18,4 @@ await ctx.api.act('hdd-backup');await ctx.api.confirmBackup(true);assert.equal(c
 await ctx.api.act('stop','business');assert.equal(calls[2].action,'stop');assert.equal(calls[2].module,'business');assert(!Object.hasOwn(calls[2],'purge_history'));
 console.log('PASS: no backup before choice; cancel sends nothing; preserve/purge choices explicit; unrelated actions unchanged')})().catch(e=>{console.error(e);process.exit(1)});
 '''
-r=subprocess.run(['sudo','-n','docker','exec','-i','nas-immich-server-1','node','-e',harness],input=json.dumps({'js':script}),text=True,capture_output=True)
-if r.returncode:raise RuntimeError(r.stderr)
-print(r.stdout.strip())
+print(run_node(harness,{'js':script}).strip())

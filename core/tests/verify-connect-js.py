@@ -6,7 +6,7 @@ from pathlib import Path as _NasPath
 _nas_sys.path.insert(0,str(_NasPath(__file__).resolve().parents[1]/'scripts'))
 import json,subprocess
 from pathlib import Path
-from nasctl import DOCKER
+from js_runner import run_node
 root=Path(__file__).resolve().parents[2]
 js=(root/'core/web/connect.js').read_text()
 harness=r'''
@@ -31,6 +31,4 @@ sync.peers=[{id:'P',name:'Mac',connected:true,folder_state:'valid',completion:99
 console.log(JSON.stringify({state:'PASS',checks,limitations:['Node VM execution with simulated local API; browser CORS/permission and actual Syncthing verified separately']}));
 })().catch(e=>{console.error(e.message);process.exit(1)});
 '''
-r=subprocess.run(DOCKER+['exec','-i','nas-immich-server-1','node','-e',harness],input=json.dumps({'js':js}),text=True,capture_output=True)
-if r.returncode:raise RuntimeError(r.stderr.strip())
-report=json.loads(r.stdout);(root/'system/runtime/acceptance/connect-js.json').write_text(json.dumps(report,indent=2)+'\n');print('PASS:',len(report['checks']),'browser enrollment behavior checks')
+report=json.loads(run_node(harness,{'js':js}));(root/'system/runtime/acceptance/connect-js.json').write_text(json.dumps(report,indent=2)+'\n');print('PASS:',len(report['checks']),'browser enrollment behavior checks')

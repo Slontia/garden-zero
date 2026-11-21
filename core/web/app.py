@@ -52,7 +52,8 @@ def md(text):
  return ''.join(lines)
 
 JS='''async function request(path,body){let r=await fetch(path,{method:body?'POST':'GET',headers:{'Content-Type':'application/json','X-NAS-Request':'1'},body:body?JSON.stringify(body):undefined});let d=await r.json();if(r.status===401){location='/';throw Error('请重新登录')}if(!r.ok)throw Error(d.error||'操作失败');return d}async function logout(){if(typeof forgetLocal==='function')forgetLocal();await request('/api/logout',{});location='/'}'''
-METAJS=JS+Path('/app/dashboard.js').read_text()
+MANAGEMENTJS=Path('/app/management.js').read_text()
+METAJS=JS+MANAGEMENTJS+Path('/app/dashboard.js').read_text()
 
 class Handler(http.server.BaseHTTPRequestHandler):
  server_version='NAS'
@@ -130,12 +131,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
     if path=='/api/system':return self.json(200,agent('/system'))
     for prefix in ('/api/app-logs/','/api/container-logs/'):
      if path.startswith(prefix):return self.json(200,agent(path[4:]))
-    if path in ('/system','/logs'):
-     name=path[1:];return self.send(200,page('零号庭院 · '+('系统监控' if name=='system' else '日志'),Path('/app/'+name+'.html').read_text(),JS+Path('/app/'+name+'.js').read_text(),'dashboard'))
+    if path=='/system':
+     self.send_response(302);self.send_header('Location','/containers');self.end_headers();return
     if path.startswith('/api/logs/'):return self.json(200,agent(path[4:]))
-    if path!='/':return self.json(404,{'error':'not found'})
-    body=Path('/app/dashboard.html').read_text()
-    return self.send(200,page('零号庭院 · Garden Zero',body,METAJS,'dashboard')+'<script src="/connect.js"></script>')
+    names={'/':('apps','dashboard','应用'),'/apps':('apps','dashboard','应用'),'/backups':('backups','backups','备份'),'/containers':('containers','containers','容器'),'/logs':('logs','logs','日志')}
+    if path not in names:return self.json(404,{'error':'not found'})
+    active,name,title=names[path];nav=Path('/app/navigation.html').read_text().replace('class="nav-link" href="/'+active+'"','class="nav-link active" href="/'+active+'" aria-current="page"')
+    body=Path('/app/'+name+'.html').read_text().replace('<!--NAVIGATION-->',nav)
+    script=METAJS if name=='dashboard' else JS+(MANAGEMENTJS if name=='backups' else '')+Path('/app/'+name+'.js').read_text()
+    return self.send(200,page('零号庭院 · '+title,body,script,'dashboard')+('<script src="/connect.js"></script>' if name=='dashboard' else ''))
    if MODE=='files':return self.files(parsed)
    if MODE=='knowledge':return self.knowledge(parsed)
    self.json(404,{'error':'not found'})
