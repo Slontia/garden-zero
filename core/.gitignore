@@ -1,0 +1,4 @@
+# core contains maintained source only. Runtime output belongs to ../system.
+.env
+.env.*
+!.env.example

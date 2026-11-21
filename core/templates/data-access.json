@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "scope": "NAS 容器的数据挂载；不限制拥有宿主机权限的管理员",
+  "readers": [
+    "files",
+    "smb",
+    "backup"
+  ],
+  "rules": [
+    {
+      "path": ".",
+      "writer": null,
+      "readers": [],
+      "purpose": "目录规则入口；未分配路径没有应用写入者"
+    },
+    {
+      "path": "immich",
+      "writer": "immich-server",
+      "readers": [],
+      "purpose": "照片原件、上传、缩略图、转码与相册导出"
+    },
+    {
+      "path": "git",
+      "writer": "git",
+      "readers": [],
+      "purpose": "Git 裸仓库；通过 SSH 推送与拉取"
+    },
+    {
+      "path": "knowledge",
+      "writer": "administrator",
+      "readers": [
+        "knowledge"
+      ],
+      "purpose": "管理员在主机维护的 Markdown 与附件；网页只读"
+    },
+    {
+      "path": "shared",
+      "writer": "syncthing",
+      "readers": [],
+      "purpose": "多设备完整同步；Syncthing 统一维护普通文件、历史版本和目录标记",
+      "maintenance": {
+        "writer": "restore",
+        "condition": "仅历史恢复：取得生命周期锁并暂停 NAS 共享后生成新副本"
+      }
+    }
+  ]
+}

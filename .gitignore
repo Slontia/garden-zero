@@ -1,0 +1,47 @@
+# Runtime and user content, including Windows junctions. Never traverse or publish.
+/data
+/system
+
+# Host-specific configuration and credentials.
+.env
+.env.*
+!.env.example
+!*.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+
+# Database images, backup payloads and logs.
+*.img
+*.vhd
+*.vhdx
+*.dump
+*.sqlite
+*.sqlite3
+*.db
+*.log
+*.tar
+*.tar.gz
+*.zip
+
+# Generated tooling output.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+node_modules/
+coverage/
+
+# Local editor/OS metadata.
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.tmp

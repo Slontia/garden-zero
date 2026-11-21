@@ -1,0 +1,13 @@
+[Unit]
+Description=NAS allowlisted host control and backup scheduler
+After=docker.service
+Wants=docker.service
+[Service]
+Environment=PYTHONDONTWRITEBYTECODE=1
+Type=simple
+ExecStart=/usr/bin/python3 /mnt/c/nas/system/installed/nasctl.py agent
+Restart=on-failure
+RestartSec=10
+UMask=0027
+[Install]
+WantedBy=multi-user.target

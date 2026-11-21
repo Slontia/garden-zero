@@ -1,0 +1,249 @@
+name: nas
+x-logging: &logging
+  driver: json-file
+  options: {max-size: 10m, max-file: '3'}
+x-web: &web
+  image: ${NAS_WEB_IMAGE}
+  restart: 'no'
+  read_only: true
+  tmpfs: ['/tmp:size=32m']
+  security_opt: ['no-new-privileges:true']
+  cap_drop: [ALL]
+  logging: *logging
+  mem_limit: 128m
+  healthcheck:
+    test: [CMD, python, -c, "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/health',timeout=3)"]
+    interval: 15s
+    timeout: 5s
+    start_period: 5s
+services:
+  meta:
+    <<: *web
+    profiles: [meta]
+    environment: {NAS_MODE: meta, NAS_PUBLIC_ORIGIN: "${NAS_PUBLIC_ORIGIN:-}"}
+    ports: ['127.0.0.1:8080:8080']
+    volumes:
+      - type: bind
+        source: ${NAS_HOST}/secrets/admin.json
+        target: /credentials/admin.json
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${NAS_HOST}/secrets/agent-token
+        target: /credentials/agent-token
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: /run/nas-control
+        target: /control
+        read_only: true
+        bind: {create_host_path: false}
+  files:
+    <<: *web
+    profiles: [files]
+    environment: {NAS_MODE: files}
+    ports: ['127.0.0.1:8081:8080']
+    volumes:
+      - type: bind
+        source: ${NAS_DATA}
+        target: /data
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${NAS_HOST}/secrets/admin.json
+        target: /credentials/admin.json
+        read_only: true
+        bind: {create_host_path: false}
+  knowledge:
+    <<: *web
+    profiles: [knowledge]
+    environment: {NAS_MODE: knowledge}
+    ports: ['127.0.0.1:8082:8080']
+    volumes:
+      - type: bind
+        source: ${NAS_DATA}/knowledge
+        target: /data
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${NAS_HOST}/secrets/admin.json
+        target: /credentials/admin.json
+        read_only: true
+        bind: {create_host_path: false}
+  database:
+    profiles: [immich]
+    image: ${POSTGRES_IMAGE}
+    restart: 'no'
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: immich
+      POSTGRES_PASSWORD_FILE: /credentials/postgres-password
+      POSTGRES_INITDB_ARGS: --data-checksums
+    volumes:
+      - type: bind
+        source: /run/nas/database/postgres
+        target: /var/lib/postgresql/data
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${NAS_HOST}/secrets/postgres-password
+        target: /credentials/postgres-password
+        read_only: true
+        bind: {create_host_path: false}
+    shm_size: 128mb
+    logging: *logging
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -h 127.0.0.1 -U postgres -d immich && psql -U postgres -d immich -Atc "SELECT 1" | grep -q 1']
+      interval: 10s
+      timeout: 5s
+      start_period: 40s
+  cache:
+    profiles: [immich]
+    image: ${VALKEY_IMAGE}
+    restart: 'no'
+    command: [valkey-server, --save, '', --appendonly, 'no']
+    mem_limit: 128m
+    logging: *logging
+    healthcheck:
+      test: [CMD, valkey-cli, ping]
+      interval: 15s
+      timeout: 5s
+  immich-server:
+    profiles: [immich]
+    image: ${IMMICH_SERVER_IMAGE}
+    restart: 'no'
+    environment:
+      DB_HOSTNAME: database
+      DB_USERNAME: postgres
+      DB_DATABASE_NAME: immich
+      REDIS_HOSTNAME: cache
+      IMMICH_CONFIG_FILE: /config/immich.json
+      TZ: Asia/Shanghai
+    env_file: ['${NAS_HOST}/config/immich.env']
+    ports: ['127.0.0.1:2283:2283']
+    volumes:
+      - type: bind
+        source: ${NAS_DATA}/immich
+        target: /data
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${NAS_HOST}/config/immich.json
+        target: /config/immich.json
+        read_only: true
+        bind: {create_host_path: false}
+    depends_on:
+      database: {condition: service_healthy}
+      cache: {condition: service_healthy}
+    logging: *logging
+    healthcheck:
+      disable: false
+  immich-machine-learning:
+    profiles: [ml]
+    image: ${IMMICH_ML_IMAGE}
+    mem_limit: 3g
+    restart: 'no'
+    environment:
+      MACHINE_LEARNING_MODEL_REVISION: v2
+      MACHINE_LEARNING_WORKERS: '1'
+      MACHINE_LEARNING_REQUEST_THREADS: '1'
+      MACHINE_LEARNING_MODEL_TTL: '120'
+      HTTP_PROXY: ${NAS_HTTP_PROXY:-}
+      HTTPS_PROXY: ${NAS_HTTPS_PROXY:-}
+      NO_PROXY: localhost,127.0.0.1,::1,database,cache,immich-machine-learning
+    volumes:
+      - type: bind
+        source: ${NAS_HOST}/cache/ml
+        target: /cache
+        bind: {create_host_path: false}
+    logging: *logging
+    healthcheck: {disable: false}
+  tailscale:
+    profiles: [tailscale]
+    image: ${TAILSCALE_IMAGE}
+    network_mode: host
+    command: [/usr/local/bin/tailscaled, --tun=userspace-networking, --statedir=/var/lib/tailscale, --socket=/var/run/tailscale/tailscaled.sock]
+    restart: 'no'
+    environment:
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: 'true'
+      TS_AUTH_ONCE: 'true'
+      TS_HOSTNAME: nas
+    volumes:
+      - type: bind
+        source: ${NAS_HOST}/state/tailscale
+        target: /var/lib/tailscale
+        bind: {create_host_path: false}
+    logging: *logging
+    mem_limit: 192m
+    healthcheck:
+      test: [CMD-SHELL, 'tailscale debug prefs >/dev/null']
+      interval: 15s
+      timeout: 5s
+      start_period: 15s
+  syncthing:
+    profiles: [syncthing]
+    image: ${SYNCTHING_IMAGE}
+    restart: 'no'
+    environment: {PUID: '1000', PGID: '1000'}
+    ports: ['127.0.0.1:8384:8384', '127.0.0.1:22000:22000']
+    volumes:
+      - type: bind
+        source: ${NAS_HOST}/state/syncthing
+        target: /var/syncthing/config
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${NAS_DATA}/shared
+        target: /var/syncthing/Shared
+        bind: {create_host_path: false}
+    logging: *logging
+    mem_limit: 256m
+  git:
+    profiles: [git]
+    image: ${NAS_SERVICES_IMAGE}
+    restart: 'no'
+    environment: {NAS_MODE: git}
+    ports: ['127.0.0.1:2222:22']
+    volumes:
+      - type: bind
+        source: ${NAS_DATA}/git
+        target: /repos
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${NAS_HOST}/state/git
+        target: /state
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${NAS_HOST}/state/git/authorized_keys
+        target: /credentials/authorized_keys
+        read_only: true
+        bind: {create_host_path: false}
+    tmpfs: ['/run:size=16m']
+    logging: *logging
+    mem_limit: 128m
+    healthcheck:
+      test: [CMD-SHELL, 'test -s /run/sshd.pid && kill -0 $(cat /run/sshd.pid)']
+      interval: 15s
+      timeout: 5s
+  smb:
+    profiles: [smb]
+    image: ${NAS_SERVICES_IMAGE}
+    restart: 'no'
+    environment: {NAS_MODE: smb}
+    ports: ['127.0.0.1:1445:445']
+    volumes:
+      - type: bind
+        source: ${NAS_DATA}
+        target: /data
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${NAS_HOST}/secrets/smb-password
+        target: /credentials/smb-password
+        read_only: true
+        bind: {create_host_path: false}
+    tmpfs: ['/run:size=32m']
+    logging: *logging
+    mem_limit: 192m
+    healthcheck:
+      test: [CMD-SHELL, 'test -s /run/samba/smbd.pid && kill -0 $(cat /run/samba/smbd.pid)']
+      interval: 15s
+      timeout: 5s

@@ -1,0 +1,15 @@
+[Unit]
+Description=NAS guarded state restoration and clean shutdown
+After=docker.service nas-agent.service
+Requires=docker.service
+Wants=nas-agent.service
+[Service]
+Environment=PYTHONDONTWRITEBYTECODE=1
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/python3 /mnt/c/nas/system/installed/nasctl.py start all
+ExecStop=/usr/bin/python3 /mnt/c/nas/system/installed/nasctl.py shutdown
+TimeoutStartSec=900
+TimeoutStopSec=300
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,8 @@
+[Unit]
+Description=NAS readiness observation every ten minutes
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=10min
+Unit=nas-soak.service
+[Install]
+WantedBy=timers.target

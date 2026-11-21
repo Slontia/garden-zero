@@ -1,0 +1,27 @@
+param([ValidateSet('internal')][string]$DatabaseLocation='internal',[switch]$CheckOnly,[string]$ExpectedVolumeGuid,[switch]$CreateDatabaseImage,[ValidatePattern('^postgres(?:-recovered-(?:internal-)?[0-9]{8,14})?\.img$')][string]$DatabaseImageName='postgres.img')
+$ErrorActionPreference='Stop'
+$root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..')).TrimEnd('\')
+$drive=[IO.Path]::GetPathRoot($root).Substring(0,1).ToUpperInvariant()
+if($drive -notmatch '^[A-Z]$' -or $drive -eq 'C'){throw 'NAS root must be on its separate NTFS volume.'}
+$volume=Get-Volume -DriveLetter $drive
+if($volume.FileSystem -ne 'NTFS'){throw 'NAS volume must remain NTFS.'}
+$guid=([regex]::Match($volume.UniqueId,'\{([0-9a-fA-F-]{36})\}')).Groups[1].Value.ToLowerInvariant()
+if(-not $guid -or ($ExpectedVolumeGuid -and $ExpectedVolumeGuid.Trim('{}').ToLowerInvariant() -ne $guid)){throw 'Wrong NAS volume identity.'}
+$base='C:\nas';$runtime=Join-Path $base 'system';$storage=Join-Path $runtime 'databases\immich';$image=Join-Path $storage $DatabaseImageName
+$receipt=@{schema=2;root_wsl=('/mnt/'+$drive.ToLowerInvariant()+$root.Substring(2).Replace('\','/'));drive=$drive.ToLowerInvariant();volume_guid=$guid;filesystem='NTFS';database_location='internal';image_wsl=('/mnt/c'+$image.Substring(2).Replace('\','/'))}
+if($CheckOnly){if($CreateDatabaseImage -and (Test-Path $image)){throw 'Production image exists; refusing recreation.'};$receipt|ConvertTo-Json -Compress;Write-Output 'Read-only check complete; no files, ACLs, links or disk formats changed.';exit 0}
+$config=Join-Path $runtime 'config\config.json'
+if(Test-Path $config){$current=Get-Content -Raw $config|ConvertFrom-Json;if($current.root -ne $receipt.root_wsl){throw 'Another checkout owns C:\nas; refusing takeover.'};if($CreateDatabaseImage){throw 'Configured instance exists; refusing database creation.'}}
+if(Test-Path (Join-Path $base 'host\config.json')){throw 'Legacy layout detected; use the reviewed directory migration.'}
+$receiptPath=Join-Path $runtime 'state\prepared-host.json'
+if(-not(Test-Path $config) -and (Test-Path $receiptPath)){$prior=Get-Content -Raw $receiptPath|ConvertFrom-Json;if($prior.root_wsl -ne $receipt.root_wsl -or $prior.volume_guid -ne $guid -or $prior.image_wsl -ne $receipt.image_wsl){throw 'Different preparation receipt exists.'}}
+if((Get-Volume -DriveLetter C).SizeRemaining -lt $(if($CreateDatabaseImage){24GB}else{10GB})){throw 'Insufficient internal disk space.'}
+if(-not(Test-Path $base)){New-Item -ItemType Directory -Path $base|Out-Null;$acl=Get-Acl $base;$acl.SetAccessRuleProtection($true,$false);foreach($sid in @([Security.Principal.WindowsIdentity]::GetCurrent().User.Value,'S-1-5-18','S-1-5-32-544')){$rule=New-Object Security.AccessControl.FileSystemAccessRule((New-Object Security.Principal.SecurityIdentifier($sid)),'FullControl','ContainerInherit,ObjectInherit','None','Allow');$acl.AddAccessRule($rule)};Set-Acl -LiteralPath $base -AclObject $acl}
+foreach($path in @($base,$runtime)){if(Test-Path $path){if((Get-Item $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint){throw "Runtime parent cannot be a link: $path"}}else{New-Item -ItemType Directory -Path $path|Out-Null}}
+foreach($name in @('config','secrets','state','cache','cache\ml','logs','backups','installed','runtime','archive','exports','databases','databases\immich')){$path=Join-Path $runtime $name;if(Test-Path $path){if((Get-Item $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint){throw "Unexpected runtime link: $path"}}else{New-Item -ItemType Directory -Path $path|Out-Null}}
+$system=Join-Path $root 'system';foreach($path in @($system,(Join-Path $system 'runtime'),(Join-Path $system 'archive'))){if(-not(Test-Path $path)){New-Item -ItemType Directory -Path $path|Out-Null}elseif((Get-Item $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint){throw "SSD runtime root cannot be a link: $path"}}
+foreach($name in @('config','secrets','state','cache','logs','backups','installed','exports','databases')){$link=Join-Path $system $name;$target=Join-Path $runtime $name;if(Test-Path $link){$item=Get-Item $link -Force;if($item.LinkType -ne 'Junction' -or [IO.Path]::GetFullPath(($item.Target -join '')).TrimEnd('\') -ne $target.TrimEnd('\')){throw "Unexpected system entry: $link"}}else{New-Item -ItemType Junction -Path $link -Target $target|Out-Null}}
+foreach($pair in @(@('runtime','local'),@('archive','local'))){$link=Join-Path (Join-Path $system $pair[0]) $pair[1];$target=Join-Path $runtime $pair[0];if(-not(Test-Path $link)){New-Item -ItemType Junction -Path $link -Target $target|Out-Null}}
+if($CreateDatabaseImage){if(Test-Path $image){throw 'Production image exists; refusing recreation.'};$stream=[IO.File]::Open($image,[IO.FileMode]::CreateNew,[IO.FileAccess]::ReadWrite,[IO.FileShare]::ReadWrite);try{& fsutil.exe sparse setflag $image;if($LASTEXITCODE -ne 0){throw 'Sparse flag failed.'};$stream.SetLength(64GB);$stream.Flush($true)}finally{$stream.Dispose()};Write-Output 'Created NEW blank sparse image file; not formatted.'}
+if(-not(Test-Path $config) -and -not(Test-Path $receiptPath)){$stream=[IO.File]::Open($receiptPath,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None);try{$bytes=[Text.Encoding]::UTF8.GetBytes(($receipt|ConvertTo-Json));$stream.Write($bytes,0,$bytes.Length)}finally{$stream.Dispose()}}
+Write-Output 'NAS runtime prepared; user data, shared WSL and Docker storage unchanged.'

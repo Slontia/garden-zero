@@ -1,0 +1,7 @@
+[Unit]
+Description=NAS ongoing readiness observation
+After=docker.service nas-agent.service
+[Service]
+Environment=PYTHONDONTWRITEBYTECODE=1
+Type=oneshot
+ExecStart=/usr/bin/python3 /mnt/c/nas/system/installed/soak-check.py
