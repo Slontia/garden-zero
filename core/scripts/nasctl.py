@@ -9,6 +9,8 @@ CONFIG=Path(os.environ.get('NAS_HOST_CONFIG','/mnt/c/nas/system/config/config.js
 DOCKER=['/usr/bin/docker','--host','unix:///var/run/docker.sock']
 MODULES={'immich':['immich-server','database','cache'],'ml':['immich-machine-learning'],'meta':['meta'],'files':['files'],'knowledge':['knowledge'],'git':['git'],'smb':['smb'],'syncthing':['syncthing'],'tailscale':['tailscale']}
 WRITER=None
+LOCK_ROOT=Path('/run/nas')
+_APP_OPERATIONS={};_APP_OPERATIONS_LOCK=threading.Lock()
 BUSINESS=['immich','files','knowledge','git','smb','syncthing','ml']
 def cfg():
  c=json.loads(CONFIG.read_text())
@@ -25,14 +27,32 @@ def compose(c,*args,**kw):
  return run(DOCKER+['compose','--project-name',c['project'],'--env-file',str(Path(c['host'])/'config/compose.env'),'-f',str(Path(c['host'])/'config/nas.yml')]+list(args),**kw)
 def audit(c,action,detail):
  p=Path(c['host'])/'logs/operations.jsonl'
- with p.open('a') as f:f.write(json.dumps({'time':datetime.datetime.now(datetime.timezone.utc).isoformat(),'action':action,'detail':detail},ensure_ascii=False)+'\n')
+ with p.open('a') as f:
+  fcntl.flock(f,fcntl.LOCK_EX)
+  f.write(json.dumps({'time':datetime.datetime.now(datetime.timezone.utc).isoformat(),'action':action,'detail':detail},ensure_ascii=False)+'\n')
 @contextlib.contextmanager
-def lock():
- Path('/run/nas').mkdir(mode=0o750,exist_ok=True)
- with open('/run/nas/lifecycle.lock','a') as f:
-  try:fcntl.flock(f,fcntl.LOCK_EX|fcntl.LOCK_NB)
-  except BlockingIOError:raise RuntimeError('Another NAS operation is running')
+def lock(shared=False):
+ LOCK_ROOT.mkdir(mode=0o750,exist_ok=True)
+ with open(LOCK_ROOT/'lifecycle.lock','a') as stream:
+  try:fcntl.flock(stream,(fcntl.LOCK_SH if shared else fcntl.LOCK_EX)|fcntl.LOCK_NB)
+  except BlockingIOError:raise RuntimeError('有应用或互斥维护操作正在进行，请稍后重试')
   yield
+
+@contextlib.contextmanager
+def application_lock(app,operation):
+ from nas_apps import APPS
+ if app not in APPS or APPS[app].get('protected'):raise RuntimeError('Invalid or protected application')
+ with lock(shared=True):
+  with open(LOCK_ROOT/('app-'+app+'.lock'),'a') as stream:
+   try:fcntl.flock(stream,fcntl.LOCK_EX|fcntl.LOCK_NB)
+   except BlockingIOError:raise RuntimeError('此应用正在更新，请等待本次操作完成')
+   with _APP_OPERATIONS_LOCK:_APP_OPERATIONS[app]={**operation,'started_at':datetime.datetime.now(datetime.timezone.utc).isoformat()}
+   try:yield
+   finally:
+    with _APP_OPERATIONS_LOCK:_APP_OPERATIONS.pop(app,None)
+
+def application_operations():
+ with _APP_OPERATIONS_LOCK:return {key:dict(value) for key,value in _APP_OPERATIONS.items()}
 
 def volume(c):
  if not Path(c['root']).is_dir() or not Path(c['data']).is_dir():raise RuntimeError('NAS SSD/data directory missing')
@@ -116,6 +136,11 @@ def desired_state(c):
  return state
 
 def remember(c,modules,enabled):
+ with open(Path(c['host'])/'state/.desired-modules.lock','a') as stream:
+  fcntl.flock(stream,fcntl.LOCK_EX)
+  _remember(c,modules,enabled)
+
+def _remember(c,modules,enabled):
  state=desired_state(c);selection=set(state['modules'])
  selection.update(modules) if enabled else selection.difference_update(modules)
  if 'ml' in modules and ('immich' not in modules or enabled):state['ml_preference']=enabled
@@ -225,6 +250,7 @@ def status(c):
  except OSError:pass
  from nas_resources import snapshot as resource_snapshot
  result['resources']=resource_snapshot(c['project'],inspected if 'inspected' in locals() else None)
+ result['operations']=application_operations()
  result['storage_blocked']=(Path(c['host'])/'state/deployment-blocked').exists()
  result['backup']=backup_summary(c,read_state(c,'backup.json',{'state':'not_run'}),datetime.datetime.now(),read_state(c,'schedules.json',{'backup':True}).get('backup',True))
  try:result['backup']['same_disk_as_database']=os.stat(Path(c['image']).parent).st_dev==os.stat(c['backup_root']).st_dev
@@ -407,10 +433,13 @@ def action(c,data):
     result=restore_copy(c,data.get('path'),data.get('version'));audit(c,'sync-restore-copy',result);return result
    else:pause(c,data.get('paused'));audit(c,'sync-pause',{'paused':data.get('paused')})
  elif operation in ('app-power','app-feature'):
-  from nas_apps import power,feature
-  with lock():
-   if operation=='app-power':power(c,data.get('app'),data.get('enabled'))
-   else:feature(c,data.get('app'),data.get('feature'),data.get('enabled'))
+  from nas_apps import power,feature,APPS
+  app=data.get('app');enabled=data.get('enabled');name=data.get('feature')
+  if app not in APPS or not isinstance(enabled,bool):raise RuntimeError('Invalid application operation')
+  if operation=='app-feature' and not any(item['id']==name for item in APPS[app].get('features',[])):raise RuntimeError('Unknown application feature')
+  with application_lock(app,{'action':operation,'enabled':enabled,'feature':name if operation=='app-feature' else None}):
+   if operation=='app-power':power(c,app,enabled)
+   else:feature(c,app,name,enabled)
  elif operation=='enable-all':
   with lock():start(c,'all',enable_all=True)
  elif operation in ('start','stop','restart'):

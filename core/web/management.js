@@ -4,7 +4,14 @@ const states={unavailable:'状态未知',ready:'应用就绪',stopped:'已停止
 function label(state){return ({interrupted:'备份未完成，等待续传',success:'成功',success_with_resume_error:'备份成功，但业务恢复失败',running:'进行中',failed:'失败',skipped:'跳过（业务已停止）',not_run:'尚未运行',observing:'观察中',fault:'异常',paused:'已暂停','24h_probes_passed':'24 小时探针通过',awaiting_folder:'等待选择同步目录',awaiting_pairing:'等待设备配对',configured:'已配置',unavailable:'不可用',not_configured:'待配置',not_connected:'未接入',Running:'已连接',login_required:'等待授权'})[state]||state||'暂无记录'}
 function node(tag,text,cls){let n=document.createElement(tag);n.textContent=text||'';if(cls)n.className=cls;return n}
 let actionPending=false;
-async function submitAction(data){if(actionPending)return;actionPending=true;document.querySelectorAll('[data-control]').forEach(x=>x.disabled=true);let msg=document.querySelector('#message');msg.textContent='正在更新，请稍候…';try{await request('/api/action',data);msg.textContent='已完成，设置已保存'}catch(e){msg.textContent=e.message}finally{actionPending=false;await refresh()}}
+async function submitAction(data){if(data.action==='app-power'||data.action==='app-feature')return submitAppAction(data);if(actionPending)return;actionPending=true;document.querySelectorAll('[data-control]').forEach(x=>x.disabled=true);let msg=document.querySelector('#message');msg.textContent='正在更新，请稍候…';try{await request('/api/action',data);msg.textContent='已完成，设置已保存'}catch(e){msg.textContent=e.message}finally{actionPending=false;await refresh()}}
+const pendingApps=new Map(),appErrors=new Map();
+function appOperation(id,d=window.viewStatus){return pendingApps.get(id)||d?.operations?.[id]||null}
+function appsBusy(d=window.viewStatus){return pendingApps.size>0||Object.keys(d?.operations||{}).length>0}
+function appsTransitioning(d=window.viewStatus){return appsBusy(d)||Object.values(d?.apps||{}).some(app=>app.state==='starting'||app.features?.some(feature=>feature.state==='starting'))}
+function spinner(){let element=node('span','','operation-spinner');element.setAttribute('aria-hidden','true');return element}
+function repaintApps(){if(typeof renderApps==='function'&&window.viewStatus){renderApps(window.viewStatus);document.querySelectorAll('.hero-actions [data-control]').forEach(button=>button.disabled=actionPending||appsBusy()||window.viewStatus.storage_blocked)}}
+async function submitAppAction(data){if(actionPending||appOperation(data.app))return;pendingApps.set(data.app,{...data});appErrors.delete(data.app);repaintApps();try{await request('/api/action',data);await refresh()}catch(error){appErrors.set(data.app,error.message)}finally{pendingApps.delete(data.app);await refresh();repaintApps()}}
 let backupAction=null;
 async function act(action,module){if(action==='backup'||action==='hdd-backup'){backupAction=action;document.querySelector('#backup-choice').showModal();return}return submitAction({action,module})}
 function cancelBackup(){backupAction=null;document.querySelector('#backup-choice').close()}

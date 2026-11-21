@@ -22,7 +22,7 @@ def snapshot(c,modules,desired):
   if key=='immich':entry['log_sources'].sort(key=lambda s:['immich-server','immich-machine-learning','database','cache'].index(s['id']))
   for feature in app.get('features',[]):
    m=feature['module'];v=modules.get(m,{'state':'unavailable'});needs_parent=feature.get('requires_parent',False)
-   entry['features'].append({k:value for k,value in feature.items() if k not in ('module','requires_parent')}|{'enabled':desired.get('ml_preference',True) if m=='ml' else module_running(v),'active':module_running(v),'available':not needs_parent or state=='ready','state':v['state'],'hint':'先开启相册；保留上次设置' if needs_parent and state!='ready' else '功能已就绪' if v['state']=='ready' else '已关闭' if v['state']=='stopped' else '就绪待确认'})
+   entry['features'].append({k:value for k,value in feature.items() if k not in ('module','requires_parent')}|{'enabled':desired.get('ml_preference',True) if m=='ml' else module_running(v),'active':module_running(v),'effective':v['state']=='ready' and module_running(v) and (not needs_parent or state=='ready'),'available':not needs_parent or state=='ready','state':v['state'],'hint':'先开启相册；保留上次设置' if needs_parent and state!='ready' else '功能已就绪' if v['state']=='ready' else '已关闭' if v['state']=='stopped' else '就绪待确认'})
   result[key]=entry
  return result
 
