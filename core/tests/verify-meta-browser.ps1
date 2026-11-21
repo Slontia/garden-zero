@@ -60,7 +60,12 @@ try {
         throw ('Page readiness timed out: ' + $expression)
     }
     function Navigate($path,$expression) { Invoke-CDP 'Page.navigate' @{url=('http://127.0.0.1:8080'+$path)} | Out-Null; Wait-Ready $expression }
+    $script:headingStyles = @{}
     function Check-Navigation($path) {
+        $heading = Evaluate "(()=>{let hero=document.querySelector('.hero.page-header'),title=hero?.querySelector('.page-heading > h1'),description=hero?.querySelector('.page-heading > p');if(!title||!description||document.querySelectorAll('h1').length!==1||hero.querySelector('.eyebrow,h1 span'))throw Error('Heading structure mismatch');let a=getComputedStyle(hero),b=getComputedStyle(title),c=getComputedStyle(description);return {viewport:innerWidth,styles:JSON.stringify([a.marginTop,a.marginBottom,b.fontSize,b.fontWeight,b.lineHeight,b.marginBottom,c.fontSize,c.lineHeight]),left:title.getBoundingClientRect().left}})()"
+        $key = [string]$heading.viewport
+        if ($script:headingStyles.ContainsKey($key) -and $script:headingStyles[$key] -ne $heading.styles) { throw ('Inconsistent page heading style: ' + $path) }
+        $script:headingStyles[$key] = $heading.styles
         if ((Evaluate "JSON.stringify([...document.querySelectorAll('.side-nav a')].map(a=>new URL(a.href).pathname))===JSON.stringify(['/apps','/backups','/containers','/logs']) && document.querySelectorAll('.side-nav [aria-current=page]').length===1 && new URL(document.querySelector('.side-nav [aria-current=page]').href).pathname==='$path'") -ne $true) { throw 'Four-page navigation mismatch' }
     }
     function Screenshot($name) { $shot=Invoke-CDP 'Page.captureScreenshot' @{format='png';captureBeyondViewport=$false}; [IO.File]::WriteAllBytes("$taskDir\$name.png",[Convert]::FromBase64String($shot.data)) }
@@ -118,7 +123,7 @@ try {
         Screenshot ($entry[0].Substring(1)+'-mobile')
     }
     Evaluate "fetch('/api/logout',{method:'POST',headers:{'Content-Type':'application/json','X-NAS-Request':'1'},body:'{}'}).then(r=>r.ok)" | Out-Null
-    @{state='PASS';checks=@('four independent routes and navigation','compact resources and ticking uptime','Git details and write-only ownership','sync draft survives refresh','dedicated backup and explicit retention choices','container filter','real logs from stopped app','desktop/mobile no page overflow');screenshots=$taskDir;no_application_state_changed=$true} | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 "$taskDir\result.json"
+    @{state='PASS';checks=@('consistent heading typography and spacing on all four pages at desktop/mobile widths','four independent routes and navigation','compact resources and ticking uptime','Git details and write-only ownership','sync draft survives refresh','dedicated backup and explicit retention choices','container filter','real logs from stopped app','desktop/mobile no page overflow');screenshots=$taskDir;no_application_state_changed=$true} | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 "$taskDir\result.json"
     Write-Output ('PASS: four-page Chrome acceptance. Screenshots: '+$taskDir)
     Invoke-CDP 'Browser.close' @{} | Out-Null
 } finally {
