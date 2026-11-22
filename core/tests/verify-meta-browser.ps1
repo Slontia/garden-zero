@@ -74,13 +74,23 @@ try {
     function Screenshot($name) { $shot=Invoke-CDP 'Page.captureScreenshot' @{format='png';captureBeyondViewport=$false}; [IO.File]::WriteAllBytes("$taskDir\$name.png",[Convert]::FromBase64String($shot.data)) }
     Wait-Ready "document.querySelectorAll('#modules .app-row').length===5 && !document.querySelector('#message').textContent"
     Check-Navigation '/apps'
+    if ((Evaluate "!document.querySelector('#app-files [data-storage=data]')&&!/immich|joplin/i.test(document.querySelector('.resource-overview').textContent)&&document.querySelectorAll('#database-storage .resource-help-tooltip').length===2&&!document.querySelector('#database-storage .resource-caption')") -ne $true) { throw 'Read-only file attribution or public resource content mismatch' }
+    $metricPosition = Evaluate "(()=>{let r=document.querySelector('#resource-database .resource-help-trigger').getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()"
+    Invoke-CDP 'Input.dispatchMouseEvent' @{type='mouseMoved';x=$metricPosition.x;y=$metricPosition.y} | Out-Null
+    if ((Evaluate "getComputedStyle(document.querySelector('#resource-database .resource-help-tooltip')).display!=='none'") -ne $true) { throw 'Database filesystem meaning missing on hover' }
+    Invoke-CDP 'Input.dispatchMouseEvent' @{type='mouseMoved';x=10;y=10} | Out-Null
+    Evaluate "document.querySelector('#resource-database-image .resource-help-trigger').focus({preventScroll:true})" | Out-Null
+    if ((Evaluate "getComputedStyle(document.querySelector('#resource-database-image .resource-help-tooltip')).display!=='none'") -ne $true) { throw 'Sparse image meaning missing on keyboard focus' }
+    Invoke-CDP 'Input.dispatchKeyEvent' @{type='keyDown';key='Escape';code='Escape';windowsVirtualKeyCode=27} | Out-Null
+    if ((Evaluate "getComputedStyle(document.querySelector('#resource-database-image .resource-help-tooltip')).display==='none'") -ne $true) { throw 'Resource meaning Escape dismissal failed' }
+    Evaluate "document.activeElement.blur()" | Out-Null
     if ((Evaluate "!document.querySelector('#app-platform,.resource-scope-note')&&document.querySelector('.resource-overview #database-storage #resource-database')&&document.querySelector('.resource-overview #resource-database-image')!==null") -ne $true) { throw 'Platform card or database overview placement mismatch' }
     if ((Evaluate "/^\d{2,}:\d{2}:\d{2}$/.test(document.querySelector('#resource-uptime').textContent) && !document.querySelector('.compact-resources svg') && document.querySelector('.compact-resources').getBoundingClientRect().height<330 && !document.querySelector('#data-permissions,#permission-path,#backup-now,#observation')") -ne $true) { throw 'Compact resource or removed panels mismatch' }
     $before = Evaluate "document.querySelector('#resource-uptime').textContent"
     Start-Sleep -Milliseconds 2200
     if ((Evaluate "document.querySelector('#resource-uptime').textContent") -eq $before) { throw 'Uptime does not tick' }
     if ((Evaluate "(()=>{let ids=['resource-cpu','resource-memory','resource-nas-disk','resource-local-disk'],r=ids.map(id=>document.getElementById(id).getBoundingClientRect());return r.every(x=>Math.abs(x.top-r[0].top)<2)&&!document.querySelector('#resource-disks')&&document.querySelectorAll('.composite-meter').length===2})()") -ne $true) { throw 'Four-column composite resource layout failed' }
-    $identityOk = Evaluate "(()=>{for(let [id,types]of Object.entries({immich:['data','database'],files:['data'],shared:['data'],joplin:['data','database'],git:['data']})){let card=document.querySelector('#app-'+id),summary=card?.querySelector('summary');if(!card||card.open||summary.querySelector('.app-id')?.textContent!==id||summary.querySelectorAll('.storage-indicator').length!==types.length||summary.querySelector('.write-path'))return false;for(let type of types)if(!summary.querySelector('[data-storage='+type+'] .storage-icon'))return false}return true})()"
+    $identityOk = Evaluate "(()=>{for(let [id,types]of Object.entries({immich:['data','database'],files:[],shared:['data'],joplin:['data','database'],git:['data']})){let card=document.querySelector('#app-'+id),summary=card?.querySelector('summary');if(!card||card.open||summary.querySelector('.app-id')?.textContent!==id||summary.querySelectorAll('.storage-indicator').length!==types.length||summary.querySelector('.write-path'))return false;for(let type of types)if(!summary.querySelector('[data-storage='+type+'] .storage-icon'))return false}return true})()"
     if (-not $identityOk) { throw 'Application ID or storage attribution mismatch' }
     $position = Evaluate "(()=>{let b=document.querySelector('#app-immich [data-storage=data] .storage-icon');let r=b.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()"
     Invoke-CDP 'Input.dispatchMouseEvent' @{type='mouseMoved';x=$position.x;y=$position.y} | Out-Null

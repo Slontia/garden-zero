@@ -23,7 +23,7 @@ def snapshot(c,modules,desired):
   active=any(module_running(v) for v in primary)
   state='ready' if all(v['state']=='ready' for v in primary) else 'stopped' if all(v['state']=='stopped' for v in primary) else 'partial' if any(v['state']=='ready' for v in primary) else 'starting' if active else 'unavailable'
   entry={k:v for k,v in app.items() if k not in ('modules','primary','features')};entry.update(id=key,state=state,running=active,services=sum((MODULES[m] for m in app['modules']),[]),features=[],log_sources=[{'id':service,'name':{'immich-server':'相册服务','immich-machine-learning':'智能检索','database':'共享 PostgreSQL','cache':'缓存','files':'网页浏览','smb':'网络挂载','syncthing':'同步服务','joplin':'Joplin 同步服务','git':'Git 服务','meta':'零号庭院管理','tailscale':'远程连接'}.get(service,service)} for module in app['modules'] for service in MODULES[module]])
-  entry['storage']={'data':bool(app.get('data_paths')),'database':bool(app.get('database'))}
+  entry['storage']={'data':bool(app.get('data_paths')) and not app.get('data_read_only',False),'database':bool(app.get('database'))}
   if key=='immich':entry['log_sources'].sort(key=lambda s:['immich-server','immich-machine-learning','database','cache'].index(s['id']))
   for feature in app.get('features',[]):
    m=feature['module'];v=modules.get(m,{'state':'unavailable'});needs_parent=feature.get('requires_parent',False)

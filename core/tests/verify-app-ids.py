@@ -30,7 +30,7 @@ class Tests(unittest.TestCase):
   modules={m:{'state':'stopped','containers':[]} for m in n.MODULES}
   result=a.snapshot({},modules,{})
   self.assertEqual({key for key,app in result.items() if app['storage']['database']},{'immich','joplin'})
-  self.assertEqual({key for key,app in result.items() if app['storage']['data']},{'immich','files','shared','joplin','git'})
+  self.assertEqual({key for key,app in result.items() if app['storage']['data']},{'immich','shared','joplin','git'})
  def test_legacy_power_routes_to_same_application(self):
   with patch.object(n,'start') as start:
    a.power({},'knowledge',True);a.power({},'joplin',True)
