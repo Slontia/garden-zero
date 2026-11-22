@@ -62,6 +62,9 @@ try {
     function Navigate($path,$expression) { Invoke-CDP 'Page.navigate' @{url=('http://127.0.0.1:8080'+$path)} | Out-Null; Wait-Ready $expression }
     $script:headingStyles = @{}
     function Check-Navigation($path) {
+        if ($path -eq '/apps') {
+            if ((Evaluate "[...document.querySelectorAll('.app-title-line')].length===6&&[...document.querySelectorAll('.app-title-line')].every(line=>{let title=line.querySelector('h3').getBoundingClientRect(),identity=line.querySelector('.app-identity').getBoundingClientRect();return Math.abs((title.top+title.bottom-identity.top-identity.bottom)/2)<2&&identity.left>=title.right&&line.nextElementSibling.getBoundingClientRect().top>=line.getBoundingClientRect().bottom})") -ne $true) { throw 'Application title, ID and icons are not on the same line' }
+        }
         $heading = Evaluate "(()=>{let hero=document.querySelector('.hero.page-header'),title=hero?.querySelector('.page-heading > h1'),description=hero?.querySelector('.page-heading > p');if(!title||!description||document.querySelectorAll('h1').length!==1||hero.querySelector('.eyebrow,h1 span'))throw Error('Heading structure mismatch');let a=getComputedStyle(hero),b=getComputedStyle(title),c=getComputedStyle(description);return {viewport:innerWidth,styles:JSON.stringify([a.marginTop,a.marginBottom,b.fontSize,b.fontWeight,b.lineHeight,b.marginBottom,c.fontSize,c.lineHeight]),left:title.getBoundingClientRect().left}})()"
         $key = [string]$heading.viewport
         if ($script:headingStyles.ContainsKey($key) -and $script:headingStyles[$key] -ne $heading.styles) { throw ('Inconsistent page heading style: ' + $path) }
