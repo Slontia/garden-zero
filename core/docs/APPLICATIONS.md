@@ -37,7 +37,7 @@
 - WSL 部署仅读取 WSL 可见的 CPU 与内存上限，不读取 Windows 整机资源；普通 Linux 同样按宿主可见资源统计。
 - NAS 数据盘及本机存储盘显示所在卷整体用量，包含其他文件。本机存储盘承载数据库、运行数据及本机快照，不代表专用备份分区。
 - 采样失败显示未知，不伪造 NAS 用量为 0。分项与总量读取存在很短的采样时差，图层独立绘制，不能将两层宽度相加。
-- 共享数据库内部用量及稀疏镜像分配放在基础服务展开栏，包含 Immich 与 Joplin。
+- 共享数据库文件系统与稀疏镜像用量放在资源概览的两列紧凑统计中，包含 Immich 与 Joplin；资源区域底部不重复展示统计口径文字。
 
 计账参考：[Linux cgroup v2](https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html) 与 [/proc 统计](https://www.kernel.org/doc/html/latest/filesystems/proc.html)。
 
@@ -92,3 +92,5 @@ WSL2 使用宿主 Windows 的物理 CPU 和内存；虚拟 CPU 由宿主调度�
 `storage.data` 和 `storage.database` 是后端应用资源声明，不根据运行状态或名称猜测，不因停止应用而丢失标识。数据目录表示读写或只读使用，数据库标识表示业务库使用，而不是提供数据库基础设施。
 
 旧应用 ID `knowledge` 和 `syncthing` 分别作为 `joplin`、`shared` 的兼容别名；日志链接和展开书签兼容，操作归一化后取得同一把应用锁，不能绕过并发保护。持久化启动选择的内部模块键仍保留兼容，不要求与面向用户的应用 ID 相同。数据库内建 postgres 维护库、账户不重命名为业务 ID。
+
+首页仅显示五个业务应用，隐藏 platform 卡片；后端仍保留受保护基础服务，容器归属和日志选择不变。无参数进入日志页默认选中 platform 的全部日志，指定 app 或 service 时优先使用链接参数。

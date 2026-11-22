@@ -38,3 +38,5 @@ body.login{min-height:100vh;background:radial-gradient(ellipse at 25% 25%,#e6f0e
 
 .app-title-line{display:flex;align-items:center;gap:12px;min-width:0;margin-bottom:6px}.app-title-line h3{margin:0;white-space:nowrap;flex:none}.app-title-line .app-identity{margin:0;flex:none}.app-title-line .app-id{white-space:nowrap}
 @media(max-width:580px){.app-summary .row-title{grid-column:2/-1;padding-right:20px}.app-title-line{gap:8px}.app-title-line h3{font-size:13px}.app-title-line .app-identity{gap:5px}.app-title-line .app-id{font-size:10px}.app-title-line .storage-icon{width:20px;height:20px}.app-summary .row-chevron{align-self:start;justify-self:end;margin-top:3px}}
+
+.database-resource-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px;border-top:1px solid var(--line);margin-top:17px;padding-top:15px}.database-resource-grid .resource-item-head{flex-wrap:wrap;gap:4px 10px;font-size:11px}.database-resource-grid .resource-item-head strong{font-size:12px;font-variant-numeric:tabular-nums}.database-resource-grid .resource-caption{text-align:left}.database-resource-grid .compact-meter{height:5px}

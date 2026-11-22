@@ -63,7 +63,7 @@ try {
     $script:headingStyles = @{}
     function Check-Navigation($path) {
         if ($path -eq '/apps') {
-            if ((Evaluate "[...document.querySelectorAll('.app-title-line')].length===6&&[...document.querySelectorAll('.app-title-line')].every(line=>{let title=line.querySelector('h3').getBoundingClientRect(),identity=line.querySelector('.app-identity').getBoundingClientRect();return Math.abs((title.top+title.bottom-identity.top-identity.bottom)/2)<2&&identity.left>=title.right&&line.nextElementSibling.getBoundingClientRect().top>=line.getBoundingClientRect().bottom})") -ne $true) { throw 'Application title, ID and icons are not on the same line' }
+            if ((Evaluate "[...document.querySelectorAll('.app-title-line')].length===5&&[...document.querySelectorAll('.app-title-line')].every(line=>{let title=line.querySelector('h3').getBoundingClientRect(),identity=line.querySelector('.app-identity').getBoundingClientRect();return Math.abs((title.top+title.bottom-identity.top-identity.bottom)/2)<2&&identity.left>=title.right&&line.nextElementSibling.getBoundingClientRect().top>=line.getBoundingClientRect().bottom})") -ne $true) { throw 'Application title, ID and icons are not on the same line' }
         }
         $heading = Evaluate "(()=>{let hero=document.querySelector('.hero.page-header'),title=hero?.querySelector('.page-heading > h1'),description=hero?.querySelector('.page-heading > p');if(!title||!description||document.querySelectorAll('h1').length!==1||hero.querySelector('.eyebrow,h1 span'))throw Error('Heading structure mismatch');let a=getComputedStyle(hero),b=getComputedStyle(title),c=getComputedStyle(description);return {viewport:innerWidth,styles:JSON.stringify([a.marginTop,a.marginBottom,b.fontSize,b.fontWeight,b.lineHeight,b.marginBottom,c.fontSize,c.lineHeight]),left:title.getBoundingClientRect().left}})()"
         $key = [string]$heading.viewport
@@ -72,14 +72,15 @@ try {
         if ((Evaluate "JSON.stringify([...document.querySelectorAll('.side-nav a')].map(a=>new URL(a.href).pathname))===JSON.stringify(['/apps','/backups','/containers','/logs']) && document.querySelectorAll('.side-nav [aria-current=page]').length===1 && new URL(document.querySelector('.side-nav [aria-current=page]').href).pathname==='$path'") -ne $true) { throw 'Four-page navigation mismatch' }
     }
     function Screenshot($name) { $shot=Invoke-CDP 'Page.captureScreenshot' @{format='png';captureBeyondViewport=$false}; [IO.File]::WriteAllBytes("$taskDir\$name.png",[Convert]::FromBase64String($shot.data)) }
-    Wait-Ready "document.querySelectorAll('#modules .app-row').length===6 && !document.querySelector('#message').textContent"
+    Wait-Ready "document.querySelectorAll('#modules .app-row').length===5 && !document.querySelector('#message').textContent"
     Check-Navigation '/apps'
-    if ((Evaluate "/^\d{2,}:\d{2}:\d{2}$/.test(document.querySelector('#resource-uptime').textContent) && !document.querySelector('.compact-resources svg') && document.querySelector('.compact-resources').getBoundingClientRect().height<260 && !document.querySelector('#data-permissions,#permission-path,#backup-now,#observation')") -ne $true) { throw 'Compact resource or removed panels mismatch' }
+    if ((Evaluate "!document.querySelector('#app-platform,.resource-scope-note')&&document.querySelector('.resource-overview #database-storage #resource-database')&&document.querySelector('.resource-overview #resource-database-image')!==null") -ne $true) { throw 'Platform card or database overview placement mismatch' }
+    if ((Evaluate "/^\d{2,}:\d{2}:\d{2}$/.test(document.querySelector('#resource-uptime').textContent) && !document.querySelector('.compact-resources svg') && document.querySelector('.compact-resources').getBoundingClientRect().height<330 && !document.querySelector('#data-permissions,#permission-path,#backup-now,#observation')") -ne $true) { throw 'Compact resource or removed panels mismatch' }
     $before = Evaluate "document.querySelector('#resource-uptime').textContent"
     Start-Sleep -Milliseconds 2200
     if ((Evaluate "document.querySelector('#resource-uptime').textContent") -eq $before) { throw 'Uptime does not tick' }
     if ((Evaluate "(()=>{let ids=['resource-cpu','resource-memory','resource-nas-disk','resource-local-disk'],r=ids.map(id=>document.getElementById(id).getBoundingClientRect());return r.every(x=>Math.abs(x.top-r[0].top)<2)&&!document.querySelector('#resource-disks')&&document.querySelectorAll('.composite-meter').length===2})()") -ne $true) { throw 'Four-column composite resource layout failed' }
-    $identityOk = Evaluate "(()=>{for(let [id,types]of Object.entries({immich:['data','database'],files:['data'],shared:['data'],joplin:['data','database'],git:['data'],platform:[]})){let card=document.querySelector('#app-'+id),summary=card?.querySelector('summary');if(!card||card.open||summary.querySelector('.app-id')?.textContent!==id||summary.querySelectorAll('.storage-indicator').length!==types.length||summary.querySelector('.write-path'))return false;for(let type of types)if(!summary.querySelector('[data-storage='+type+'] .storage-icon'))return false}return true})()"
+    $identityOk = Evaluate "(()=>{for(let [id,types]of Object.entries({immich:['data','database'],files:['data'],shared:['data'],joplin:['data','database'],git:['data']})){let card=document.querySelector('#app-'+id),summary=card?.querySelector('summary');if(!card||card.open||summary.querySelector('.app-id')?.textContent!==id||summary.querySelectorAll('.storage-indicator').length!==types.length||summary.querySelector('.write-path'))return false;for(let type of types)if(!summary.querySelector('[data-storage='+type+'] .storage-icon'))return false}return true})()"
     if (-not $identityOk) { throw 'Application ID or storage attribution mismatch' }
     $position = Evaluate "(()=>{let b=document.querySelector('#app-immich [data-storage=data] .storage-icon');let r=b.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()"
     Invoke-CDP 'Input.dispatchMouseEvent' @{type='mouseMoved';x=$position.x;y=$position.y} | Out-Null
@@ -113,6 +114,7 @@ try {
     if ((Evaluate "document.querySelectorAll('#system-rows tr').length===3") -ne $true) { throw 'Container application filter failed' }
     Screenshot 'containers-desktop'
     Navigate '/logs' "document.querySelector('#log-output')?.dataset.loaded==='true'"
+    if ((Evaluate "document.querySelector('#log-output').dataset.app==='platform'&&document.querySelector('#log-output').dataset.source==='all'") -ne $true) { throw 'Logs do not default to platform services' }
     Check-Navigation '/logs'
     Evaluate "selectLogApp('git')" | Out-Null
     Wait-Ready "document.querySelector('#log-output').dataset.loaded==='true' && document.querySelector('#log-output').dataset.app==='git'"
@@ -121,7 +123,7 @@ try {
     Navigate '/logs?app=knowledge' "document.querySelector('#log-output')?.dataset.loaded==='true'&&document.querySelector('#log-output').dataset.app==='joplin'"
     Navigate '/logs?app=syncthing' "document.querySelector('#log-output')?.dataset.loaded==='true'&&document.querySelector('#log-output').dataset.app==='shared'"
     Invoke-CDP 'Emulation.setDeviceMetricsOverride' @{width=390;height=844;deviceScaleFactor=1;mobile=$true} | Out-Null
-    foreach ($entry in @(@('/apps',"document.querySelectorAll('#modules .app-row').length===6"),@('/backups',"document.querySelector('#mirror-details')?.children.length>0"),@('/containers',"document.querySelectorAll('#system-rows tr').length===11"),@('/logs',"document.querySelector('#log-output')?.dataset.loaded==='true'"))) {
+    foreach ($entry in @(@('/apps',"document.querySelectorAll('#modules .app-row').length===5"),@('/backups',"document.querySelector('#mirror-details')?.children.length>0"),@('/containers',"document.querySelectorAll('#system-rows tr').length===11"),@('/logs',"document.querySelector('#log-output')?.dataset.loaded==='true'"))) {
         Navigate $entry[0] $entry[1]
         Check-Navigation $entry[0]
         if ((Evaluate "document.documentElement.scrollWidth<=innerWidth") -ne $true) { throw ('Mobile overflow '+$entry[0]) }
