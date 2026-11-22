@@ -3,13 +3,17 @@ import sys as _nas_sys
 _nas_sys.dont_write_bytecode=True
 import datetime,json,re,subprocess,time,threading
 APPS={
- 'immich':{'name':'Immich 相册','icon':'photo','modules':['immich','ml'],'primary':['immich'],'description':'备份照片与视频，管理原件、缩略图与转码；可选智能检索和人脸识别。','purpose':'管理照片原件、上传、缩略图和转码；智能检索与人脸识别是相册的可选功能。','lifecycle':'关闭相册会同时停止它的所有功能。重新开启时恢复保存的功能设置。','features':[{'id':'intelligence','name':'智能检索与人脸识别','description':'按内容搜索照片，识别人脸；仅在相册运行时生效。','module':'ml','requires_parent':True}]},
- 'files':{'name':'文件浏览','icon':'folder','modules':['files','smb'],'primary':['files','smb'],'description':'只读浏览、下载或 SMB 挂载全部文件；离线读写请使用共享同步盘。','purpose':'只读访问文件空间；离线读写请使用共享同步盘。','lifecycle':'应用开关控制全部访问入口；展开后可分别调整网页与网络挂载。','features':[{'id':'web','name':'网页浏览','description':'在浏览器里查看目录和下载文件。','module':'files'},{'id':'network-drive','name':'SMB 只读挂载','description':'在 Finder 或文件管理器挂载网络共享。','module':'smb'}]},
- 'syncthing':{'name':'共享同步盘','icon':'sync','modules':['syncthing'],'primary':['syncthing'],'description':'同步设备与 NAS 的共享文件；离线可读写，保留冲突副本和历史版本。','purpose':'在设备与 NAS 的共享空间之间同步文件。冲突保留双方副本，NAS 保留历史版本。','lifecycle':'应用开关控制整个同步服务；暂停共享只暂停文件同步，绑定关系和本地文件保留。'},
- 'knowledge':{'name':'Joplin 笔记','icon':'book','modules':['knowledge'],'primary':['knowledge'],'description':'用手机和电脑离线写笔记、日记与长文，联网后同步标签、图片和附件。','purpose':'Joplin 客户端负责写作；此服务提供私人同步与账户管理。','lifecycle':'关闭后客户端仍可离线编辑；恢复服务后打开客户端同步。手机后台或锁屏时同步可能中断。'},
- 'git':{'name':'Git 仓库','icon':'git','modules':['git'],'primary':['git'],'description':'通过授权 SSH 公钥推送、拉取 Git 仓库，保存项目版本。','purpose':'使用授权 SSH 公钥推送、拉取 Git 裸仓库；不提供交互式 shell。','lifecycle':'关闭后暂停推送和拉取，保留仓库。'},
+ 'immich':{'data_paths':['immich'],'database':'immich','database_user':'immich','name':'Immich 相册','icon':'photo','modules':['immich','ml'],'primary':['immich'],'description':'备份照片与视频，管理原件、缩略图与转码；可选智能检索和人脸识别。','purpose':'管理照片原件、上传、缩略图和转码；智能检索与人脸识别是相册的可选功能。','lifecycle':'关闭相册会同时停止它的所有功能。重新开启时恢复保存的功能设置。','features':[{'id':'intelligence','name':'智能检索与人脸识别','description':'按内容搜索照片，识别人脸；仅在相册运行时生效。','module':'ml','requires_parent':True}]},
+ 'files':{'data_paths':['.'],'data_read_only':True,'name':'文件浏览','icon':'folder','modules':['files','smb'],'primary':['files','smb'],'description':'只读浏览、下载或 SMB 挂载全部文件；离线读写请使用共享同步盘。','purpose':'只读访问文件空间；离线读写请使用共享同步盘。','lifecycle':'应用开关控制全部访问入口；展开后可分别调整网页与网络挂载。','features':[{'id':'web','name':'网页浏览','description':'在浏览器里查看目录和下载文件。','module':'files'},{'id':'network-drive','name':'SMB 只读挂载','description':'在 Finder 或文件管理器挂载网络共享。','module':'smb'}]},
+ 'shared':{'data_paths':['shared'],'name':'共享同步盘','icon':'sync','modules':['syncthing'],'primary':['syncthing'],'description':'同步设备与 NAS 的共享文件；离线可读写，保留冲突副本和历史版本。','purpose':'在设备与 NAS 的共享空间之间同步文件。冲突保留双方副本，NAS 保留历史版本。','lifecycle':'应用开关控制整个同步服务；暂停共享只暂停文件同步，绑定关系和本地文件保留。'},
+ 'joplin':{'data_paths':['joplin'],'database':'joplin','database_user':'joplin','name':'Joplin 笔记','icon':'book','modules':['knowledge'],'primary':['knowledge'],'description':'用手机和电脑离线写笔记、日记与长文，联网后同步标签、图片和附件。','purpose':'Joplin 客户端负责写作；此服务提供私人同步与账户管理。','lifecycle':'关闭后客户端仍可离线编辑；恢复服务后打开客户端同步。手机后台或锁屏时同步可能中断。'},
+ 'git':{'data_paths':['git'],'name':'Git 仓库','icon':'git','modules':['git'],'primary':['git'],'description':'通过授权 SSH 公钥推送、拉取 Git 仓库，保存项目版本。','purpose':'使用授权 SSH 公钥推送、拉取 Git 裸仓库；不提供交互式 shell。','lifecycle':'关闭后暂停推送和拉取，保留仓库。'},
  'platform':{'name':'零号庭院基础服务','icon':'server','modules':['meta','tailscale','postgres'],'primary':['meta','tailscale','postgres'],'description':'提供管理、私人远程访问与共享 PostgreSQL；各应用使用独立账户和数据库。','purpose':'提供管理、认证和安全的私人访问入口；管理容器不直接挂载 data。','lifecycle':'由主机维护，避免关闭管理或远程连接导致失联。','protected':True}
 }
+APP_ALIASES={'knowledge':'joplin','syncthing':'shared'}
+def canonical_app(key):
+ return APP_ALIASES.get(key,key) if isinstance(key,str) else key
+
 def module_running(v):return any(x['state'] in ('running','restarting','paused') for x in v.get('containers',[]))
 def snapshot(c,modules,desired):
  from nasctl import MODULES
@@ -19,6 +23,7 @@ def snapshot(c,modules,desired):
   active=any(module_running(v) for v in primary)
   state='ready' if all(v['state']=='ready' for v in primary) else 'stopped' if all(v['state']=='stopped' for v in primary) else 'partial' if any(v['state']=='ready' for v in primary) else 'starting' if active else 'unavailable'
   entry={k:v for k,v in app.items() if k not in ('modules','primary','features')};entry.update(id=key,state=state,running=active,services=sum((MODULES[m] for m in app['modules']),[]),features=[],log_sources=[{'id':service,'name':{'immich-server':'相册服务','immich-machine-learning':'智能检索','database':'共享 PostgreSQL','cache':'缓存','files':'网页浏览','smb':'网络挂载','syncthing':'同步服务','joplin':'Joplin 同步服务','git':'Git 服务','meta':'零号庭院管理','tailscale':'远程连接'}.get(service,service)} for module in app['modules'] for service in MODULES[module]])
+  entry['storage']={'data':bool(app.get('data_paths')),'database':bool(app.get('database'))}
   if key=='immich':entry['log_sources'].sort(key=lambda s:['immich-server','immich-machine-learning','database','cache'].index(s['id']))
   for feature in app.get('features',[]):
    m=feature['module'];v=modules.get(m,{'state':'unavailable'});needs_parent=feature.get('requires_parent',False)
@@ -28,6 +33,7 @@ def snapshot(c,modules,desired):
 
 def power(c,key,enabled):
  from nasctl import start,stop
+ key=canonical_app(key)
  if key not in APPS or not isinstance(enabled,bool):raise RuntimeError('Invalid application control')
  app=APPS[key]
  if app.get('protected'):raise RuntimeError('基础服务由主机维护')
@@ -35,6 +41,7 @@ def power(c,key,enabled):
 
 def feature(c,key,name,enabled):
  from nasctl import start,stop,inventory
+ key=canonical_app(key)
  if key not in APPS or not isinstance(enabled,bool):raise RuntimeError('Invalid application feature')
  item=next((f for f in APPS[key].get('features',[]) if f['id']==name),None)
  if item is None:raise RuntimeError('Unknown application feature')
@@ -82,6 +89,7 @@ def log_text(c,key,container=False):
   if key not in sum(MODULES.values(),[]):raise RuntimeError('Unknown NAS container service')
   services=[key]
  else:
+  key=canonical_app(key)
   if key not in APPS:raise RuntimeError('Unknown application')
   services=sum((MODULES[m] for m in APPS[key]['modules']),[])
  # No environment, inspect credentials or arbitrary commands in this endpoint.

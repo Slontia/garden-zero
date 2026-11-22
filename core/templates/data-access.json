@@ -6,7 +6,6 @@
     "tailscale",
     "files",
     "smb",
-    "knowledge",
     "git",
     "syncthing",
     "immich-server",
@@ -36,12 +35,10 @@
       "purpose": "Git 裸仓库；通过 SSH 推送与拉取"
     },
     {
-      "path": "knowledge",
+      "path": "joplin-legacy",
       "writer": "administrator",
-      "readers": [
-        "knowledge"
-      ],
-      "purpose": "保留的旧 Markdown 与附件；不再作为网页写作入口"
+      "readers": [],
+      "purpose": "Joplin 旧 Markdown 与附件保留目录；尚未通过客户端导入，由主机管理员维护"
     },
     {
       "path": "shared",

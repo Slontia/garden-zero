@@ -46,7 +46,7 @@ class Tests(unittest.TestCase):
   with patch.object(apps,'power',side_effect=power),concurrent.futures.ThreadPoolExecutor(2) as pool:
    futures=[pool.submit(n.action,{}, {'action':'app-power','app':name,'enabled':True}) for name in ['git','knowledge']]
    for future in futures:future.result(timeout=3)
-  self.assertEqual(set(visited),{'git','knowledge'})
+  self.assertEqual(set(visited),{'git','joplin'})
  def test_concurrent_intent_updates_do_not_overwrite_other_app(self):
   (self.root/'state').mkdir();c={'host':str(self.root),'autostart':['meta','tailscale']};original=n.desired_state
   def slow_read(config):value=original(config);time.sleep(.03);return value

@@ -40,7 +40,8 @@ def lock(shared=False):
 
 @contextlib.contextmanager
 def application_lock(app,operation):
- from nas_apps import APPS
+ from nas_apps import APPS,canonical_app
+ app=canonical_app(app)
  if app not in APPS or APPS[app].get('protected'):raise RuntimeError('Invalid or protected application')
  with lock(shared=True):
   with open(LOCK_ROOT/('app-'+app+'.lock'),'a') as stream:
@@ -457,8 +458,8 @@ def action(c,data):
     result=restore_copy(c,data.get('path'),data.get('version'));audit(c,'sync-restore-copy',result);return result
    else:pause(c,data.get('paused'));audit(c,'sync-pause',{'paused':data.get('paused')})
  elif operation in ('app-power','app-feature'):
-  from nas_apps import power,feature,APPS
-  app=data.get('app');enabled=data.get('enabled');name=data.get('feature')
+  from nas_apps import power,feature,APPS,canonical_app
+  app=canonical_app(data.get('app'));enabled=data.get('enabled');name=data.get('feature')
   if app not in APPS or not isinstance(enabled,bool):raise RuntimeError('Invalid application operation')
   if operation=='app-feature' and not any(item['id']==name for item in APPS[app].get('features',[])):raise RuntimeError('Unknown application feature')
   with application_lock(app,{'action':operation,'enabled':enabled,'feature':name if operation=='app-feature' else None}):

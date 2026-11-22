@@ -76,24 +76,27 @@ try {
     Start-Sleep -Milliseconds 2200
     if ((Evaluate "document.querySelector('#resource-uptime').textContent") -eq $before) { throw 'Uptime does not tick' }
     if ((Evaluate "(()=>{let ids=['resource-cpu','resource-memory','resource-nas-disk','resource-local-disk'],r=ids.map(id=>document.getElementById(id).getBoundingClientRect());return r.every(x=>Math.abs(x.top-r[0].top)<2)&&!document.querySelector('#resource-disks')&&document.querySelectorAll('.composite-meter').length===2})()") -ne $true) { throw 'Four-column composite resource layout failed' }
-    $pathsOk = Evaluate "(()=>{for(let [app,path]of [['immich','immich/'],['git','git/'],['syncthing','shared/'],['knowledge','joplin/']]){let card=document.querySelector('#app-'+app);if(card.open||card.querySelector('summary .write-path code')?.textContent!==path)return false}return !document.querySelector('#app-files summary .write-path')})()"
-    if (-not $pathsOk) { throw 'Collapsed writable paths or read-only app attribution mismatch' }
-    $position = Evaluate "(()=>{let b=document.querySelector('#app-immich .write-path-icon');let r=b.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()"
+    $identityOk = Evaluate "(()=>{for(let [id,types]of Object.entries({immich:['data','database'],files:['data'],shared:['data'],joplin:['data','database'],git:['data'],platform:[]})){let card=document.querySelector('#app-'+id),summary=card?.querySelector('summary');if(!card||card.open||summary.querySelector('.app-id')?.textContent!==id||summary.querySelectorAll('.storage-indicator').length!==types.length||summary.querySelector('.write-path'))return false;for(let type of types)if(!summary.querySelector('[data-storage='+type+'] .storage-icon'))return false}return true})()"
+    if (-not $identityOk) { throw 'Application ID or storage attribution mismatch' }
+    $position = Evaluate "(()=>{let b=document.querySelector('#app-immich [data-storage=data] .storage-icon');let r=b.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()"
     Invoke-CDP 'Input.dispatchMouseEvent' @{type='mouseMoved';x=$position.x;y=$position.y} | Out-Null
-    if ((Evaluate "getComputedStyle(document.querySelector('#app-immich .path-purpose-tooltip')).display!=='none'") -ne $true) { throw 'Writable path purpose does not appear on hover' }
-    Evaluate "document.querySelector('#app-immich .write-path-icon').click()" | Out-Null
+    if ((Evaluate "getComputedStyle(document.querySelector('#app-immich [data-storage=data] .storage-tooltip')).display!=='none'") -ne $true) { throw 'Storage capability tooltip does not appear on hover' }
+    Evaluate "document.querySelector('#app-immich [data-storage=data] .storage-icon').click()" | Out-Null
     if ((Evaluate "document.querySelector('#app-immich').open") -eq $true) { throw 'Purpose icon unexpectedly expands app' }
     Invoke-CDP 'Input.dispatchMouseEvent' @{type='mouseMoved';x=10;y=10} | Out-Null
-    Evaluate "document.querySelector('#app-git .write-path-icon').focus({preventScroll:true})" | Out-Null
-    if ((Evaluate "getComputedStyle(document.querySelector('#app-git .path-purpose-tooltip')).display!=='none'") -ne $true) { throw 'Writable path purpose missing for keyboard focus' }
+    Evaluate "document.querySelector('#app-git [data-storage=data] .storage-icon').focus({preventScroll:true})" | Out-Null
+    if ((Evaluate "getComputedStyle(document.querySelector('#app-git [data-storage=data] .storage-tooltip')).display!=='none'") -ne $true) { throw 'Storage capability tooltip missing for keyboard focus' }
     Invoke-CDP 'Input.dispatchKeyEvent' @{type='keyDown';key='Escape';code='Escape';windowsVirtualKeyCode=27} | Out-Null
-    if ((Evaluate "getComputedStyle(document.querySelector('#app-git .path-purpose-tooltip')).display==='none'") -ne $true) { throw 'Purpose tooltip Escape dismissal failed' }
+    if ((Evaluate "getComputedStyle(document.querySelector('#app-git [data-storage=data] .storage-tooltip')).display==='none'") -ne $true) { throw 'Purpose tooltip Escape dismissal failed' }
+    Evaluate "document.activeElement.blur()" | Out-Null
+    Evaluate "document.querySelector('#app-immich [data-storage=database] .storage-icon').focus({preventScroll:true})" | Out-Null
+    if ((Evaluate "(()=>{let tip=document.querySelector('#app-immich [data-storage=database] .storage-tooltip');return getComputedStyle(tip).display!=='none'&&tip.textContent==='\u5df2\u4f7f\u7528\u6570\u636e\u5e93'})()") -ne $true) { throw 'Database tooltip missing or incorrect' }
     Evaluate "document.activeElement.blur()" | Out-Null
     Screenshot 'apps-desktop'
     Evaluate "appViews.git.card.open=true;document.querySelector('#app-git').scrollIntoView({block:'center'})" | Out-Null
     if ((Evaluate "document.querySelector('#git-details').textContent.includes('SSH \u516c\u94a5') && ![...document.querySelectorAll('.permission-table th')].some(x=>x.textContent==='\u53ea\u8bfb\u8bbf\u95ee')") -ne $true) { throw 'Git info or write ownership details mismatch' }
     Screenshot 'git-details'
-    $draft = Evaluate "(async()=>{appViews.syncthing.card.open=true;document.querySelector('#device-connect').open=true;document.querySelector('#local-path').value='~/NAS/draft';await refresh();return document.querySelector('#local-path').value==='~/NAS/draft'&&document.querySelector('#device-connect').open&&appViews.syncthing.card.open})()"
+    $draft = Evaluate "(async()=>{appViews.shared.card.open=true;document.querySelector('#device-connect').open=true;document.querySelector('#local-path').value='~/NAS/draft';await refresh();return document.querySelector('#local-path').value==='~/NAS/draft'&&document.querySelector('#device-connect').open&&appViews.shared.card.open})()"
     if (-not $draft) { throw 'Sync binding draft or expanded state lost on refresh' }
     Navigate '/backups' "document.querySelector('#mirror-details')?.children.length>0"
     Check-Navigation '/backups'
@@ -112,6 +115,8 @@ try {
     Wait-Ready "document.querySelector('#log-output').dataset.loaded==='true' && document.querySelector('#log-output').dataset.app==='git'"
     if ((Evaluate "document.querySelectorAll('#log-tabs [role=tab]').length===2") -ne $true) { throw 'Log sources were not preserved' }
     Screenshot 'logs-desktop'
+    Navigate '/logs?app=knowledge' "document.querySelector('#log-output')?.dataset.loaded==='true'&&document.querySelector('#log-output').dataset.app==='joplin'"
+    Navigate '/logs?app=syncthing' "document.querySelector('#log-output')?.dataset.loaded==='true'&&document.querySelector('#log-output').dataset.app==='shared'"
     Invoke-CDP 'Emulation.setDeviceMetricsOverride' @{width=390;height=844;deviceScaleFactor=1;mobile=$true} | Out-Null
     foreach ($entry in @(@('/apps',"document.querySelectorAll('#modules .app-row').length===6"),@('/backups',"document.querySelector('#mirror-details')?.children.length>0"),@('/containers',"document.querySelectorAll('#system-rows tr').length===11"),@('/logs',"document.querySelector('#log-output')?.dataset.loaded==='true'"))) {
         Navigate $entry[0] $entry[1]
@@ -123,7 +128,7 @@ try {
         Screenshot ($entry[0].Substring(1)+'-mobile')
     }
     Evaluate "fetch('/api/logout',{method:'POST',headers:{'Content-Type':'application/json','X-NAS-Request':'1'},body:'{}'}).then(r=>r.ok)" | Out-Null
-    @{state='PASS';checks=@('consistent heading typography and spacing on all four pages at desktop/mobile widths','four independent routes and navigation','compact resources and ticking uptime','Git details and write-only ownership','sync draft survives refresh','dedicated backup and explicit retention choices','container filter','real logs from stopped app','desktop/mobile no page overflow');screenshots=$taskDir;no_application_state_changed=$true} | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 "$taskDir\result.json"
+    @{state='PASS';checks=@('consistent heading typography and spacing on all four pages at desktop/mobile widths','four independent routes and navigation','compact resources and ticking uptime','application IDs and storage capability tooltips','legacy app log links','Git details','sync draft survives refresh','dedicated backup and explicit retention choices','container filter','real logs from stopped app','desktop/mobile no page overflow');screenshots=$taskDir;no_application_state_changed=$true} | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 "$taskDir\result.json"
     Write-Output ('PASS: four-page Chrome acceptance. Screenshots: '+$taskDir)
     Invoke-CDP 'Browser.close' @{} | Out-Null
 } finally {

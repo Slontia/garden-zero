@@ -21,7 +21,7 @@ with tempfile.TemporaryDirectory() as tmp:
  root=Path(tmp);(root/'state').mkdir();(root/'data').mkdir();c={'host':tmp,'data':str(root/'data'),'autostart':list(n.MODULES),'ml_enabled':True,'project':'fixture'}
  data=policy();check('nested/new paths inherit their unique owner',resolve(data,'immich/upload/new/image.jpg')['writer']=='immich-server')
  check('unknown directory has no default application writer',resolve(data,'new/path')['writer'] is None)
- check('knowledge app has only read permission',resolve(data,'knowledge/articles/a.md')['writer']=='administrator' and 'knowledge' in resolve(data,'knowledge/articles/a.md')['readers'])
+ check('legacy Markdown remains administrator-maintained',resolve(data,'joplin-legacy/articles/a.md')['writer']=='administrator' and 'joplin' in resolve(data,'joplin-legacy/articles/a.md')['readers'])
  check('synchronized clients use one NAS writer',resolve(data,'shared/new.txt')['writer']=='syncthing')
  check('versions and folder markers inherit shared ownership',resolve(data,'shared/.stversions/a~v.txt')['inherited_from']=='shared' and resolve(data,'shared/.stfolder')['writer']=='syncthing')
  config={'services':{'files':{'volumes':[{'type':'bind','source':c['data'],'read_only':True}]},'immich-server':{'volumes':[{'type':'bind','source':c['data']+'/immich'}]},'syncthing':{'volumes':[{'type':'bind','source':c['data']+'/shared'}]}}}

@@ -51,7 +51,8 @@ def md(text):
  if code:lines.append('</code></pre>')
  return ''.join(lines)
 
-JS='''async function request(path,body){let r=await fetch(path,{method:body?'POST':'GET',headers:{'Content-Type':'application/json','X-NAS-Request':'1'},body:body?JSON.stringify(body):undefined});let d=await r.json();if(r.status===401){location='/';throw Error('请重新登录')}if(!r.ok)throw Error(d.error||'操作失败');return d}async function logout(){if(typeof forgetLocal==='function')forgetLocal();await request('/api/logout',{});location='/'}'''
+JS='''function canonicalApp(id){return ({knowledge:'joplin',syncthing:'shared'})[id]||id}
+async function request(path,body){let r=await fetch(path,{method:body?'POST':'GET',headers:{'Content-Type':'application/json','X-NAS-Request':'1'},body:body?JSON.stringify(body):undefined});let d=await r.json();if(r.status===401){location='/';throw Error('请重新登录')}if(!r.ok)throw Error(d.error||'操作失败');return d}async function logout(){if(typeof forgetLocal==='function')forgetLocal();await request('/api/logout',{});location='/'}'''
 MANAGEMENTJS=Path('/app/management.js').read_text()
 METAJS=JS+MANAGEMENTJS+Path('/app/dashboard.js').read_text()
 

@@ -6,14 +6,14 @@
 
 客户端「设置 → 同步」选择 Joplin Server，地址使用 Meta 的 Joplin 详情所示 HTTPS 地址。当前沿用旧知识库的私人 8444 入口与本机 8082 端口，无需增加访问控制端口。初始日常同步账户及密码在 `C:\nas\system\secrets\joplin-user.json`，管理员账户在相邻 `joplin-admin.json`。不要将这些文件提交到 Git 或发送到聊天。更改密码后更新自己的客户端；自动启动不会强制重置用户修改后的密码。
 
-浏览器入口是 Joplin 账户管理。旧 `data/knowledge/` 原样保留，后续可由客户端导入 Markdown；没有自动导入、删除或覆盖。
+浏览器入口是 Joplin 账户管理。旧资料目录 `data/joplin-legacy/` 原样保留，后续可由客户端导入 Markdown；没有自动导入、删除或覆盖。
 
 ## 部署结构
 
 - 一个 `database` 容器，沿用当前已验证 PostgreSQL 镜像、主版本和 Immich 向量扩展，不新建第二个生产 PostgreSQL。
 - `immich` 账户只连接 `immich` 数据库，`joplin` 账户只连接 `joplin` 数据库。两个账户均无超级用户、建库、创建角色权限；禁止 PUBLIC 跨库连接。管理员 `postgres` 只用于宿主维护、扩展与备份，不提供给业务容器。
 - 业务密码分别存于 `system/secrets/immich-db-password` 与 `joplin-db-password`，环境文件分别为 `immich.env` 和 `joplin.env`。不复用管理员密码。
-- PostgreSQL 属于受保护基础服务。模块名为 `postgres`；相册模块只管理相册与缓存，笔记模块沿用配置键 `knowledge`，实际容器为 `joplin`。停止一个业务不停止数据库；完整停机先停业务，再停数据库并卸载镜像。
+- PostgreSQL 属于受保护基础服务。模块名为 `postgres`；相册模块只管理相册与缓存，应用 ID 为 `joplin`；内部模块仍沿用 `knowledge` 以兼容既有启动选择，实际容器为 `joplin`。停止一个业务不停止数据库；完整停机先停业务，再停数据库并卸载镜像。
 - 共享数据库准备使用短范围依赖锁；各应用就绪等待仍可并发，不把整个启动过程重新串行化。
 - Joplin 启用文件系统载荷存储：笔记序列化内容、标签内容和附件由 Joplin 管理在 `data/joplin/`；关系、同步元信息等位于数据库。内部文件不是用户可直接修改的 Markdown 文件夹。
 - 数据库仍使用配置指定的受控 ext4 稀疏镜像。已有路径即使含 `immich` 字样也不为改名移动数据库；界面按共享数据库展示容量。
