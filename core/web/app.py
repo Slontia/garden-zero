@@ -96,10 +96,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
    if self.path=='/api/login':
     ip=self.client_address[0];now=time.time();attempts=[t for t in FAILURES.get(ip,[]) if now-t<300]
     if len(attempts)>=10:return self.json(429,{'error':'尝试次数过多，请稍后再试'})
-    password=str(data.get('password',''))[:512];username=str(data.get('username',''))
+    password=str(data.get('password',''))[:512];username=str(data.get('username',ADMIN['username']))
     digest=hashlib.scrypt(password.encode(),salt=bytes.fromhex(ADMIN['salt']),n=16384,r=8,p=1).hex()
     if username!=ADMIN['username'] or not hmac.compare_digest(digest,ADMIN['hash']):
-     FAILURES[ip]=attempts+[now];return self.json(401,{'error':'用户名或密码不正确'})
+     FAILURES[ip]=attempts+[now];return self.json(401,{'error':'密码不正确'})
     FAILURES.pop(ip,None);nonce=secrets.token_hex(24);expiry=int(now+8*3600);SESSIONS[nonce]=expiry;payload=str(expiry)+':'+MODE+':'+nonce;cookie=payload+'.'+hmac.new(KEY,payload.encode(),hashlib.sha256).hexdigest()
     return self.send(200,'{"ok":true}','application/json',{'Set-Cookie':self.cookie(cookie)})
    if not self.authenticated():return self.json(401,{'error':'请先登录'})
@@ -121,9 +121,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
    if path=='/health':return self.json(200,{'status':'ready','mode':MODE})
    if not self.authenticated():
     if path.startswith('/api/'):return self.json(401,{'error':'请先登录'})
-    body='<section class="card" style="max-width:400px;margin:12vh auto"><h1>NAS '+html.escape(MODE)+'</h1><p class="muted">私人访问入口</p><form id="login"><p><input name="username" placeholder="用户名" value="admin" autocomplete="username" required></p><p><input name="password" type="password" placeholder="密码" autocomplete="current-password" required></p><button>登录</button></form><p id="message"></p></section>'
+    identity='<input type="hidden" name="username" value="'+html.escape(ADMIN['username'],quote=True)+'" autocomplete="username">'
+    body='<section class="card" style="max-width:400px;margin:12vh auto"><h1>NAS '+html.escape(MODE)+'</h1><p class="muted">私人访问入口</p><form id="login">'+identity+'<p><input name="password" type="password" placeholder="密码" autocomplete="current-password" required></p><button>登录</button></form><p id="message"></p></section>'
     script=JS+"document.querySelector('#login').onsubmit=async e=>{e.preventDefault();try{let f=new FormData(e.target);let r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json','X-NAS-Request':'1'},body:JSON.stringify(Object.fromEntries(f))});let d=await r.json();if(!r.ok)throw Error(d.error);location='/'}catch(e){document.querySelector('#message').textContent=e.message}}"
-    if MODE=='meta':body='<section class="login-card"><div class="brand">'+'<span class="brand-mark" aria-hidden="true">▤</span><span><span class="brand-name">零号庭院<span>.</span></span><span class="brand-caption">GARDEN ZERO</span></span>'+'</div><p class="eyebrow">WELCOME HOME</p><h1>欢迎回来。</h1><p class="muted">登录你的私人数据空间</p><form id="login"><label>用户名<input name="username" value="admin" autocomplete="username" required></label><label>密码<input name="password" type="password" placeholder="输入管理密码" autocomplete="current-password" required></label><button>进入管理面板 →</button></form><p id="message" role="alert"></p><p class="login-foot">零号庭院 / GARDEN ZERO</p></section>'
+    if MODE=='meta':body='<section class="login-card"><div class="brand">'+'<span class="brand-mark" aria-hidden="true">▤</span><span><span class="brand-name">零号庭院<span>.</span></span><span class="brand-caption">GARDEN ZERO</span></span>'+'</div><p class="eyebrow">WELCOME HOME</p><h1>欢迎回来。</h1><p class="muted">登录你的私人数据空间</p><form id="login">'+identity+'<label>密码<input name="password" type="password" placeholder="输入管理密码" autocomplete="current-password" required></label><button>进入管理面板 →</button></form><p id="message" role="alert"></p><p class="login-foot">零号庭院 / GARDEN ZERO</p></section>'
     return self.send(200,page('零号庭院 · 登录' if MODE=='meta' else 'NAS 登录',body,script,'login' if MODE=='meta' else ''))
    if MODE=='meta':
     if path=='/connect.js':return self.send(200,Path('/app/connect.js').read_text(),'application/javascript; charset=utf-8')

@@ -49,8 +49,9 @@ try {
         Start-Sleep -Milliseconds 200
         if ((Evaluate "location.origin==='http://127.0.0.1:8080' && document.readyState==='complete'") -eq $true) { break }
     }
+    if ((Evaluate "(()=>{let inputs=[...document.querySelectorAll('#login input')].filter(input=>input.type!=='hidden');return inputs.length===1&&inputs[0].name==='password'&&inputs[0].type==='password'})()") -ne $true) { throw 'Single-user login must only display the password field' }
     $password = (Get-Content 'C:\nas\system\secrets\admin-password.txt' -Raw).Trim()
-    $payload = @{username='admin'; password=$password} | ConvertTo-Json -Compress
+    $payload = @{password=$password} | ConvertTo-Json -Compress
     $literal = $payload | ConvertTo-Json -Compress
     $login = Evaluate "fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json','X-NAS-Request':'1'},body:$literal}).then(r=>r.json())"
     if (-not $login.ok) { throw 'Test browser login failed' }
