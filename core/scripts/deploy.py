@@ -59,6 +59,8 @@ def main():
     if key in env.LOCAL:continue
     if not a.fetch:raise RuntimeError('Pinned image missing; --fetch required: '+key)
     subprocess.run(DOCKER+['pull',locks[key]['image']],check=True)
+   if a.build:
+    subprocess.run(DOCKER+['build','--pull=false','--build-arg','RCLONE_IMAGE='+locks['RCLONE_IMAGE']['image'],'--build-arg','RESTIC_IMAGE='+locks['RESTIC_IMAGE']['image'],'-f',str(Path(c['root'])/'core/services/cloud-backup.Dockerfile'),'-t',locks['CLOUD_BACKUP_IMAGE']['source'],str(Path(c['root'])/'core/services')],check=True)
    report['steps'].append({'environment':env.generate(c)})
    versions=json.loads((Path(c['host'])/'config/versions.json').read_text())
    report['steps'].append({'services':services.prepare(c,versions)})

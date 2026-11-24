@@ -7,11 +7,11 @@ from pathlib import Path
 from nas_policy import backup_due,backup_summary,mirror_due
 CONFIG=Path(os.environ.get('NAS_HOST_CONFIG','/mnt/c/nas/system/config/config.json'))
 DOCKER=['/usr/bin/docker','--host','unix:///var/run/docker.sock']
-MODULES={'immich':['immich-server','cache'],'postgres':['database'],'ml':['immich-machine-learning'],'meta':['meta'],'files':['files'],'knowledge':['joplin'],'git':['git'],'smb':['smb'],'syncthing':['syncthing'],'tailscale':['tailscale']}
+MODULES={'cloud':['cloud-gateway'],'identity':['authentik-server','authentik-worker','identity-gateway'],'immich':['immich-server','cache'],'postgres':['database'],'ml':['immich-machine-learning'],'meta':['meta'],'knowledge':['joplin'],'git':['git'],'smb':['smb'],'syncthing':['syncthing'],'tailscale':['tailscale']}
 WRITER=None
 LOCK_ROOT=Path('/run/nas')
 _APP_OPERATIONS={};_APP_OPERATIONS_LOCK=threading.Lock()
-BUSINESS=['immich','files','knowledge','git','smb','syncthing','ml']
+BUSINESS=['immich','knowledge','git','smb','syncthing','ml']
 def cfg():
  c=json.loads(CONFIG.read_text())
  source=Path(__file__).resolve()
@@ -138,8 +138,9 @@ def desired_state(c):
   legacy=read_state(c,'autostart.json',c['autostart']);disabled=read_state(c,'disabled.json',[])
   modules=[m for m in legacy if m not in disabled]
   state={'schema':1,'modules':modules,'ml_preference':'ml' in modules}
+ if isinstance(state,dict) and isinstance(state.get('modules'),list):state={**state,'modules':[m for m in state['modules'] if m!='files']}
  if state.get('schema')!=1 or not isinstance(state.get('modules'),list) or any(m not in MODULES for m in state['modules']):raise RuntimeError('Invalid persisted service selection')
- state={**state,'modules':list(dict.fromkeys(state['modules']+['meta','tailscale','postgres']))}
+ state={**state,'modules':list(dict.fromkeys(state['modules']+['meta','tailscale','postgres']+(['identity'] if c.get('sso',{}).get('prepared') else [])+(['cloud'] if c.get('cloud_bridge_prepared') else [])))}
  if 'immich' not in state['modules']:state['modules']=[m for m in state['modules'] if m!='ml']
  return state
 
@@ -171,7 +172,9 @@ def start(c,module,enable_all=False):
  if (Path(c['host'])/'state/deployment-blocked').exists():raise RuntimeError('Storage incident unresolved; NAS write startup is blocked. See C:\\nas\\system\\state\\storage-incident.json')
  if module=='all':
   modules=list(MODULES) if enable_all else autostart(c)
+  if not c.get('cloud_bridge_prepared'):modules=[m for m in modules if m!='cloud']
   if not c['ml_enabled']:modules=[m for m in modules if m!='ml']
+  if not c.get('sso',{}).get('prepared'):modules=[m for m in modules if m!='identity']
  elif module=='immich':modules=['immich']+(['ml'] if c['ml_enabled'] and desired_state(c).get('ml_preference',True) else [])
  elif module=='ml':
   active={r['service']:r for r in inventory(c)}
@@ -179,6 +182,10 @@ def start(c,module,enable_all=False):
   modules=['ml']
  elif module in MODULES:modules=[module]
  else:raise RuntimeError('Unknown module')
+ if c.get('sso',{}).get('enabled') and any(m in ('meta','files','immich','knowledge') for m in modules) and 'identity' not in modules:
+  active={row['service']:row for row in inventory(c)}
+  if not all(active.get(service,{}).get('health')=='healthy' and active[service]['state']=='running' for service in MODULES['identity']):modules=['identity']+modules
+ if 'identity' in modules and not (Path(c['host'])/'config/authentik.env').is_file():raise RuntimeError('Prepared identity credentials are missing; refusing default identity startup')
  from nas_access import validate_compose
  definition=json.loads(output(DOCKER+['compose','--project-name',c['project'],'--env-file',str(Path(c['host'])/'config/compose.env'),'-f',str(Path(c['host'])/'config/nas.yml'),'--profile','*','config','--format','json']))
  validate_compose(c,definition)
@@ -191,7 +198,12 @@ def start(c,module,enable_all=False):
  if 'meta' in modules:run(['systemctl','start','nas-agent.service'],stdout=subprocess.DEVNULL)
  if infra:
   compose(c,'up','-d','--no-build',*sum([MODULES[m] for m in infra],[]))
- if any(m in ('immich','ml','knowledge','postgres') for m in modules):
+ if 'identity' in modules:
+  with database_lock():
+   from nas_sso import renew_certificate
+   gateway=next((row for row in inventory(c) if row['service']=='identity-gateway'),{})
+   renew_certificate(c,reload=gateway.get('state')=='running')
+ if any(m in ('immich','ml','knowledge','postgres','identity') for m in modules):
   mount(c)
   with database_lock():
    compose(c,'up','-d','--no-build','--wait','--wait-timeout','120','database')
@@ -233,7 +245,7 @@ def stop(c,module,remember_selection=True):
  audit(c,'stop',modules)
 
 def unmount(c):
- if any(x['service'] in ('database','immich-server','immich-machine-learning','joplin') and x['state']=='running' for x in inventory(c)):raise RuntimeError('Database consumers still running')
+ if any(x['service'] in ('database','immich-server','immich-machine-learning','joplin','authentik-server','authentik-worker') and x['state']=='running' for x in inventory(c)):raise RuntimeError('Database consumers still running')
  for row in inventory(c):
   if row['service']=='database' and row['exit_code']!=0:raise RuntimeError('Unclean database exit; refusing unmount')
  if mounted(c):
@@ -267,6 +279,7 @@ def status(c):
  except OSError:pass
  from nas_resources import snapshot as resource_snapshot
  result['resources']=resource_snapshot(c['project'],inspected if 'inspected' in locals() else None)
+ result['sso']={'enabled':bool(c.get('sso',{}).get('enabled'))}
  result['joplin']=read_state(c,'joplin-account.json',{'state':'not_configured'})
  result['operations']=application_operations()
  result['storage_blocked']=(Path(c['host'])/'state/deployment-blocked').exists()
@@ -276,9 +289,12 @@ def status(c):
  result['backup']['external_mirror_configured']=bool(c.get('hdd_root'))
  result['observation']=read_state(c,'soak.json',{'state':'not_run'})
  result['schedules']=read_state(c,'schedules.json',{'backup':True,'cloud':True})
- result['cloud']={'state':'not_configured' if not c['cloud_repository'] else 'configured','last':read_state(c,'cloud-backup.json',{})}
+ from nas_cloud import summary
+ accounts=summary(c)
+ result['cloud']={'state':('configured' if all(a['state']=='ready' for a in accounts) else 'login_required') if accounts else 'configured' if c.get('cloud_repository') else 'not_configured','accounts':accounts,'prepared':bool(c.get('cloud_bridge_prepared')),'last':read_state(c,'cloud-backup.json',{})}
  hdd_last=read_state(c,'hdd-backup.json',{})
- result['hdd']={'state':hdd_last.get('state','configured') if c.get('hdd_root') else 'not_connected','mode':c.get('hdd_mode'),'path':c.get('hdd_root'),'last':hdd_last}
+ from nas_backup_history import history,disk
+ result['hdd']={'disk':disk(c),'history':history(c,hdd_last),'state':hdd_last.get('state','configured') if c.get('hdd_root') else 'not_connected','mode':c.get('hdd_mode'),'path':c.get('hdd_root'),'last':hdd_last}
  try:
   result['git']={'state':'awaiting_public_key' if not (Path(c['host'])/'state/git/authorized_keys').read_text().strip() else 'configured','repositories':[p.name for p in (Path(c['data'])/'git').glob('*.git') if p.is_dir() and not p.is_symlink()]}
  except OSError:result['git']={'state':'storage_unavailable','repositories':[]}
@@ -371,7 +387,7 @@ def backup(c):
  try:
   inv={x['service']:x for x in inventory(c)}
   if inv.get('database',{}).get('state')!='running':raise RuntimeError('Database stopped: backup skipped, no fresh success')
-  for module in ['immich','knowledge','git','syncthing']:
+  for module in ['immich','knowledge','git','syncthing','identity']:
    active=[s for s in MODULES[module] if s not in ('database','cache') and inv.get(s,{}).get('state')=='running']
    if active:
     compose(c,'stop','--timeout','90',*active);paused+=active
@@ -380,10 +396,13 @@ def backup(c):
   with (stage/'database.dump').open('wb') as f:
    subprocess.run(DOCKER+['exec','nas-database-1','pg_dump','-U','postgres','-d','immich','-Fc'],stdout=f,check=True)
   databases={'immich':{'dump':'database.dump','tables':db_signature(c['project']+'-database-1')}}
-  if (Path(c['host'])/'config/joplin.env').exists() or (Path(c['host'])/'state/shared-postgres.json').exists():
-   with (stage/'joplin.dump').open('wb') as f:
-    subprocess.run(DOCKER+['exec',c['project']+'-database-1','pg_dump','-U','postgres','-d','joplin','-Fc'],stdout=f,check=True)
-   databases['joplin']={'dump':'joplin.dump','tables':db_signature(c['project']+'-database-1','joplin')}
+  from nas_database import application_databases
+  for database in application_databases(c):
+   if database=='immich':continue
+   with (stage/(database+'.dump')).open('wb') as f:
+    subprocess.run(DOCKER+['exec',c['project']+'-database-1','pg_dump','-U','postgres','-d',database,'-Fc'],stdout=f,check=True)
+   databases[database]={'dump':database+'.dump','tables':db_signature(c['project']+'-database-1',database)}
+  if len(databases)>1:
    with (stage/'database-roles.sql').open('wb') as f:
     subprocess.run(DOCKER+['exec',c['project']+'-database-1','pg_dumpall','-U','postgres','--roles-only','--no-role-passwords'],stdout=f,check=True)
   # Stop business writers before snapshotting application-managed media and repositories.
@@ -393,16 +412,27 @@ def backup(c):
   if before!=data_tree(c['data']):raise RuntimeError('User content changed during backup; refusing a COMPLETE snapshot')
   with tarfile.open(stage/'configuration.tar','w') as tar:
    tar.add(Path(c['host'])/'config',arcname='system/config');tar.add(Path(c['host'])/'secrets',arcname='system/secrets',filter=lambda m:None if m.name.endswith('/hdd-mirror-key') else m)
-   for filename in ('desired-modules.json','autostart.json','disabled.json','schedules.json','remote.json','shared-postgres.json','joplin-account.json'):
+   for filename in ('desired-modules.json','autostart.json','disabled.json','schedules.json','remote.json','shared-postgres.json','joplin-account.json','sso-accounts.json','identity-certificate.json','cloud-accounts.json','cloud-removed-accounts.json'):
     p=Path(c['host'])/'state'/filename
     if p.is_file():tar.add(p,arcname='system/state/'+filename)
-   for directory in ('web','scripts','tests','services','templates','host','docs','compose'):
+   for directory in ('web','identity','scripts','tests','services','templates','host','docs','compose'):
     tar.add(Path(c['root'])/'core'/directory,arcname='core/'+directory,filter=lambda m:None if '__pycache__' in m.name else m)
    for filename in ('README.md','deploy.sh','start.sh','stop.sh','start.ps1','stop.ps1','.env.example','.gitignore','.gitattributes'):
     tar.add(Path(c['root'])/'core'/filename,arcname='core/'+filename)
    for filename in ('README.md','LICENSE','.gitignore','.gitattributes','.editorconfig','CONTRIBUTING.md','AGENTS.md','SECURITY.md','THIRD_PARTY_NOTICES.md'):
     p=Path(c['root'])/filename
     if p.is_file():tar.add(p,arcname='project/'+filename)
+   # OpenList refreshes tokens in SQLite; use SQLite's online backup API.
+   cloud_db=Path(c['host'])/'state/cloud-gateway/data.db'
+   if cloud_db.is_file():
+    import sqlite3
+    with tempfile.TemporaryDirectory(dir=stage) as temp:
+     destination=Path(temp)/'data.db'
+     with sqlite3.connect('file:'+str(cloud_db)+'?mode=ro',uri=True) as source_db,sqlite3.connect(destination) as target_db:source_db.backup(target_db)
+     tar.add(destination,arcname='system/state/cloud-gateway/data.db')
+    gateway_config=cloud_db.parent/'config.json'
+    if gateway_config.is_file():tar.add(gateway_config,arcname='system/state/cloud-gateway/config.json')
+   if (Path(c['host'])/'state/authentik').is_dir():tar.add(Path(c['host'])/'state/authentik',arcname='system/state/authentik')
    tar.add(Path(c['host'])/'state/git',arcname='system/state/git');tar.add(Path(c['host'])/'state/tailscale',arcname='system/state/tailscale')
    for filename in ('config.xml','cert.pem','key.pem','https-cert.pem','https-key.pem'):
     tar.add(Path(c['host'])/'state/syncthing'/filename,arcname='system/state/syncthing/'+filename)
@@ -428,7 +458,15 @@ def backup(c):
  return record
 
 def backup_with_mirror(c,purge_history=False):
- result=backup(c)
+ try:result=backup(c)
+ except (Exception,KeyboardInterrupt) as error:
+  if c.get('hdd_root'):
+   from nas_backup_history import preparation_failure
+   preparation_failure(c,error)
+  raise
+ if result['state']!='success' and c.get('hdd_root'):
+  from nas_backup_history import preparation_failure
+  preparation_failure(c,RuntimeError('数据准备未完成，磁盘备份未执行'))
  if result['state']=='success' and c.get('hdd_root'):
   run(['/usr/bin/python3',str(Path(c['host'])/'installed/external-backup.py'),'hdd','backup']+(['--purge-history'] if purge_history else []))
  return result
@@ -465,12 +503,18 @@ def action(c,data):
   with application_lock(app,{'action':operation,'enabled':enabled,'feature':name if operation=='app-feature' else None}):
    if operation=='app-power':power(c,app,enabled)
    else:feature(c,app,name,enabled)
+ elif operation=='cloud-auto':
+  from nas_cloud import action as cloud_action
+  return cloud_action(c,data)
+ elif operation in ('cloud-authorize','cloud-authorize-poll','cloud-authorize-cancel','cloud-verify','cloud-delete','cloud-backup'):
+  from nas_cloud import action as cloud_action
+  with lock():return cloud_action(c,data)
  elif operation=='enable-all':
   with lock():start(c,'all',enable_all=True)
  elif operation in ('start','stop','restart'):
   if module not in MODULES and module not in ('all','business'):raise RuntimeError('Invalid module')
-  if operation in ('stop','restart') and module in ('meta','tailscale','postgres','all'):raise RuntimeError('管理与远程连接由主机维护，不能在网页中关闭')
-  if operation=='restart' and module in ('meta','tailscale','postgres','all','business'):raise RuntimeError('Restart this infrastructure module through the host CLI')
+  if operation in ('stop','restart') and module in ('cloud','meta','tailscale','postgres','identity','all'):raise RuntimeError('管理与远程连接由主机维护，不能在网页中关闭')
+  if operation=='restart' and module in ('cloud','meta','tailscale','postgres','identity','all','business'):raise RuntimeError('Restart this infrastructure module through the host CLI')
   with lock():
    if operation in ('stop','restart'):stop(c,module)
    if operation in ('start','restart'):start(c,module)
@@ -478,7 +522,7 @@ def action(c,data):
   purge=data.get('purge_history',False)
   if not isinstance(purge,bool):raise RuntimeError('purge_history must be boolean')
   with lock():backup_with_mirror(c,purge_history=purge)
- elif operation in ('cloud-backup','hdd-backup'):
+ elif operation=='hdd-backup':
   with lock():
    if operation=='hdd-backup':
     if not c.get('hdd_root'):raise RuntimeError('Mirror target is not configured')
@@ -486,7 +530,6 @@ def action(c,data):
     if not isinstance(purge,bool):raise RuntimeError('purge_history must be boolean')
     result=backup_with_mirror(c,purge_history=purge)
     if result['state']=='skipped':raise RuntimeError('Database is stopped; mirror not updated from stale data')
-   else:run(['/usr/bin/python3',str(Path(c['host'])/'installed/external-backup.py'),'cloud','backup'])
  elif operation=='schedule':
   task=data.get('task');enabled=data.get('enabled')
   if task not in ('backup','cloud') or not isinstance(enabled,bool):raise RuntimeError('Invalid schedule')
@@ -533,12 +576,19 @@ class UnixServer(socketserver.ThreadingMixIn,socketserver.UnixStreamServer):daem
 def scheduler():
  last_backup_attempt=0
  last_mirror_attempt=0
+ last_cloud_attempt=0
+ last_certificate_attempt=-3600
  while True:
   try:
    c=cfg()
    if WRITER and WRITER.active:
     with lock():WRITER.monitor()
    now=datetime.datetime.now();last=read_state(c,'backup.json',{})
+   if c.get('sso',{}).get('prepared') and time.time()-read_state(c,'identity-certificate.json',{}).get('checked_at',0)>86400 and time.monotonic()-last_certificate_attempt>3600:
+    last_certificate_attempt=time.monotonic()
+    with lock():
+     from nas_sso import renew_certificate
+     renew_certificate(c)
    # Do not silently keep writing after the SSD disappears or ext4 aborts its journal.
    if mounted(c):
     try:
@@ -551,15 +601,23 @@ def scheduler():
      audit(c,'storage-guard',str(error))
      with lock():stop(c,'business',remember_selection=False)
    schedules=read_state(c,'schedules.json',{'backup':True,'cloud':True})
-   if not (Path(c['host'])/'state/deployment-blocked').exists() and schedules['backup'] and time.monotonic()-last_backup_attempt>300 and backup_due(c,last,now):
+   if not (Path(c['host'])/'state/deployment-blocked').exists() and __import__('nas_cloud').automatic_enabled(c) and time.monotonic()-last_backup_attempt>300 and backup_due(c,last,now):
     last_backup_attempt=time.monotonic()
     last_mirror_attempt=time.monotonic()
     with lock():
-     backup_result=backup_with_mirror(c)
-     if backup_result['state']=='success' and schedules['cloud'] and c.get('cloud_repository'):run(['/usr/bin/python3',str(Path(c['host'])/'installed/external-backup.py'),'cloud','backup'])
-   if schedules['backup'] and not (Path(c['host'])/'state/deployment-blocked').exists() and time.monotonic()-last_mirror_attempt>300 and mirror_due(c,read_state(c,'backup.json',{}),read_state(c,'hdd-backup.json',{})):
-    last_mirror_attempt=time.monotonic()
-    with lock():run(['/usr/bin/python3',str(Path(c['host'])/'installed/external-backup.py'),'hdd','backup'])
+     # An absent external disk must not prevent an independent cloud backup.
+     backup_result=backup(c)
+     if backup_result['state']=='success':
+      for target,enabled in [('cloud',__import__('nas_cloud').automatic_enabled(c))]:
+       if not enabled:continue
+       if target=='cloud':last_cloud_attempt=time.monotonic()
+       try:run(['/usr/bin/python3',str(Path(c['host'])/'installed/external-backup.py'),target,'backup','--automatic'])
+       except Exception:audit(c,target+'-backup-failed','Independent backup target failed; inspect its status')
+   if __import__('nas_cloud').automatic_enabled(c) and not (Path(c['host'])/'state/deployment-blocked').exists() and time.monotonic()-last_cloud_attempt>300:
+    from nas_cloud import retry_due
+    if retry_due(c,read_state(c,'backup.json',{}),read_state(c,'cloud-backup.json',{})):
+     last_cloud_attempt=time.monotonic()
+     with lock():run(['/usr/bin/python3',str(Path(c['host'])/'installed/external-backup.py'),'cloud','backup','--automatic'])
    if mounted(c) and (shutil.disk_usage(c['root']).free<c['critical_outer_free'] or shutil.disk_usage(Path(c['image']).parent).free<c.get('critical_image_outer_free',c['critical_outer_free']) or shutil.disk_usage(c['mount']).free<1024**3):
     with lock():stop(c,'business',remember_selection=False);audit(c,'capacity-guard','business stopped; image remains mounted')
   except Exception as error:

@@ -58,5 +58,35 @@
     "image": "joplin/server@sha256:d951ce50b6d3d542393ebc4d08bd62d9a4fb0a6f6827abb861726c83560ecf97",
     "id": "sha256:d951ce50b6d3d542393ebc4d08bd62d9a4fb0a6f6827abb861726c83560ecf97",
     "architecture": "amd64"
+  },
+  "AUTHENTIK_IMAGE": {
+    "source": "ghcr.io/goauthentik/server:2026.8.6",
+    "image": "ghcr.io/goauthentik/server@sha256:da89d8338a3b1889800eb033fd61f8d43f7aa9a1c5a042cb5e03d891b1f0c56c",
+    "id": "sha256:da89d8338a3b1889800eb033fd61f8d43f7aa9a1c5a042cb5e03d891b1f0c56c",
+    "architecture": "amd64"
+  },
+  "CADDY_IMAGE": {
+    "source": "caddy:2.11.9-alpine",
+    "image": "caddy@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0",
+    "id": "sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0",
+    "architecture": "amd64"
+  },
+  "OPENLIST_IMAGE": {
+    "source": "openlistteam/openlist:v4.2.9",
+    "image": "openlistteam/openlist@sha256:897563beb674e7ad04edff14b0037dc8443ca3978570614005519df7eae06434",
+    "id": "sha256:897563beb674e7ad04edff14b0037dc8443ca3978570614005519df7eae06434",
+    "architecture": "amd64"
+  },
+  "RCLONE_IMAGE": {
+    "source": "rclone/rclone:1.76.0",
+    "image": "rclone/rclone@sha256:7cbeec24a44f206067597c0368be4de90ae19a64d5113c7d1938bd737a81e466",
+    "id": "sha256:7cbeec24a44f206067597c0368be4de90ae19a64d5113c7d1938bd737a81e466",
+    "architecture": "amd64"
+  },
+  "CLOUD_BACKUP_IMAGE": {
+    "source": "nas/cloud-backup:1",
+    "image": "sha256:9ecb59fdcc68ba39bada98f10e87a595edd60dbf3db9cab5f6cc8eef15465cf0",
+    "architecture": "amd64",
+    "id": "sha256:9ecb59fdcc68ba39bada98f10e87a595edd60dbf3db9cab5f6cc8eef15465cf0"
   }
 }

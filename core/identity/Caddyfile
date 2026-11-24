@@ -1,0 +1,29 @@
+{
+    auto_https off
+}
+:443 {
+    tls /credentials/tls.crt /credentials/tls.key
+    @identity path /auth /auth/*
+    handle @identity {
+        reverse_proxy authentik-server:9000 {
+            header_up Host {$NAS_PUBLIC_HOST}
+            header_up X-Forwarded-Proto https
+        }
+    }
+    handle {
+        reverse_proxy meta:8080
+    }
+}
+
+:8443 {
+    tls /credentials/tls.crt /credentials/tls.key
+    redir https://{$NAS_PUBLIC_HOST}/files 302
+}
+:8444 {
+    tls /credentials/tls.crt /credentials/tls.key
+    reverse_proxy joplin:22300
+}
+:8445 {
+    tls /credentials/tls.crt /credentials/tls.key
+    reverse_proxy immich-server:2283
+}

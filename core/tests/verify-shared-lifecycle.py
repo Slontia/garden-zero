@@ -32,7 +32,19 @@ class Tests(unittest.TestCase):
    with self.assertRaisesRegex(RuntimeError,'consumers'):n.unmount(self.c)
  def test_http_cannot_stop_or_restart_shared_database(self):
   for action in ['stop','restart']:
-   with self.assertRaises(RuntimeError):n.action(self.c,{'action':action,'module':'postgres'})
+   for module in ('postgres','identity'):
+    with self.assertRaises(RuntimeError):n.action(self.c,{'action':action,'module':module})
+ def test_identity_start_checks_certificate_before_launch(self):
+  self.c['sso']={'prepared':True};(Path(self.c['host'])/'config/authentik.env').write_text('configured')
+  with patch.object(n,'inventory',return_value=[]),patch('nas_sso.renew_certificate') as renew:
+   calls=self.start('identity');renew.assert_called_once_with(self.c,reload=False);self.assertEqual(calls[0][-1],'database');self.assertIn('identity-gateway',calls[-1])
+ def test_identity_consumers_block_database_unmount(self):
+  for service in ('authentik-server','authentik-worker'):
+   with patch.object(n,'inventory',return_value=[{'service':service,'state':'running'}]):
+    with self.assertRaisesRegex(RuntimeError,'consumers'):n.unmount(self.c)
+ def test_identity_credentials_extend_the_shared_instance(self):
+  (Path(self.c['host'])/'config/authentik.env').write_text('configured')
+  passwords=db.credentials(self.c);self.assertEqual(set(passwords),{'immich','joplin','platform_auth'});self.assertEqual(len(set(passwords.values())),3);self.assertEqual(db.credentials(self.c),passwords)
  def test_credentials_are_distinct_and_repeatable(self):
   first=db.credentials(self.c);self.assertNotEqual(first['immich'],first['joplin']);self.assertEqual(db.credentials(self.c),first)
  def test_old_admin_credentials_require_explicit_migration(self):

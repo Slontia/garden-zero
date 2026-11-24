@@ -20,7 +20,7 @@ class Tests(unittest.TestCase):
     self.assertTrue(path==key or path.startswith(key+'-'))
  def test_database_and_role_match_application_id(self):
   for key,app in a.APPS.items():
-   if app.get('database'):self.assertEqual(app['database'],key);self.assertEqual(app['database_user'],key)
+   if app.get('database'):self.assertTrue(app['database']==key or app['database'].startswith(key+'_'));self.assertEqual(app['database_user'],app['database'])
  def test_registry_paths_match_an_application_namespace(self):
   registry=json.loads((Path(__file__).resolve().parents[1]/'templates/data-access.json').read_text())
   for rule in registry['rules']:
@@ -29,7 +29,7 @@ class Tests(unittest.TestCase):
  def test_storage_flags_do_not_depend_on_runtime_state(self):
   modules={m:{'state':'stopped','containers':[]} for m in n.MODULES}
   result=a.snapshot({},modules,{})
-  self.assertEqual({key for key,app in result.items() if app['storage']['database']},{'immich','joplin'})
+  self.assertEqual({key for key,app in result.items() if app['storage']['database']},{'immich','joplin','platform'})
   self.assertEqual({key for key,app in result.items() if app['storage']['data']},{'immich','shared','joplin','git'})
  def test_legacy_power_routes_to_same_application(self):
   with patch.object(n,'start') as start:

@@ -61,7 +61,7 @@ def prepare(c,versions):
  for path,data in values.items():
   if path.is_symlink():raise RuntimeError('Settings symlink refused')
   if path.exists():
-   same=json.loads(path.read_text())==json.loads(data) if path.suffix=='.json' else path.read_text().strip()==data.strip()
+   same=all(json.loads(path.read_text()).get(key)==value for key,value in json.loads(data).items()) if path.suffix=='.json' else path.read_text().strip()==data.strip()
    if not same:raise RuntimeError('Existing app settings differ; automatic overwrite refused: '+path.name)
  for path,data in values.items():
   if not path.exists():write_new(path,data)

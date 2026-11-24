@@ -15,6 +15,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
  def do_GET(self):
   s=self.server.options;self.server.calls.append(('GET',self.path))
   if self.path=='/health':return self.reply(200,{'mode':s.get('mode','meta'),'status':'ready'})
+  if self.path=='/sso/login':
+   self.send_response(s.get('sso_status',302));self.send_header('Location',s.get('sso_location','https://nas.test/auth/application/o/authorize/'));self.send_header('Content-Length','0');self.end_headers();return
   if 'probe=ok' not in self.headers.get('Cookie',''):return self.reply(401,{})
   if self.path=='/':return self.reply(200,b'<div id="modules"></div>' if s.get('dashboard',True) else b'<form id="login"></form>')
   self.server.status_calls+=1
@@ -38,6 +40,14 @@ class Tests(unittest.TestCase):
    finally:self.assertNotIn('fixture-secret',output.getvalue())
  def test_success_checks_authenticated_dashboard_status_and_logout(self):
   result=self.probe(modules=['meta','files']);self.assertEqual(result['state'],'ready');self.assertIn(('GET','/api/status'),self.server.calls);self.assertEqual(self.server.calls[-1],('POST','/api/logout'))
+ def test_sso_discovery_redirect_is_required_when_enabled(self):
+  self.config['sso']={'enabled':True,'origin':'https://nas.test'};self.assertEqual(self.probe()['state'],'ready');self.assertIn(('GET','/sso/login'),self.server.calls)
+ def test_broken_sso_prevents_success(self):
+  self.config['sso']={'enabled':True,'origin':'https://nas.test'};self.server.options['sso_status']=503
+  with self.assertRaisesRegex(RuntimeError,'Unified login'):self.probe()
+ def test_untrusted_sso_redirect_prevents_success(self):
+  self.config['sso']={'enabled':True,'origin':'https://nas.test'};self.server.options['sso_location']='https://untrusted.test/auth/'
+  with self.assertRaisesRegex(RuntimeError,'Unified login'):self.probe()
  def test_health_alone_cannot_report_ready(self):
   self.server.options['delay']=1000
   with self.assertRaisesRegex(RuntimeError,'timed out'):self.probe()

@@ -54,11 +54,10 @@ WSL2 使用宿主 Windows 的物理 CPU 和内存；虚拟 CPU 由宿主调度�
 | immich | immich-server |
 | git | git |
 | shared | syncthing |
-| joplin-legacy | 主机管理员（旧资料保留） |
 | joplin | joplin |
 | 未登记路径 | 无应用写入者 |
 
-折叠行只显示应用 ID 和存储类型，具体写入归属继续由后端登记与核验。文件浏览只读挂载整个 data，不显示文件图标；基础服务不使用自己的业务库，不因托管 PostgreSQL 显示业务数据库图标。旧 Markdown 的 joplin-legacy 目录继续保留，由主机管理员维护；Joplin 独占写入 joplin 目录。首页不展示完整权限表，后端继续拒绝跨应用写入、未登记读取及链接挂载。
+折叠行只显示应用 ID 和存储类型，具体写入归属继续由后端登记与核验。文件浏览只读挂载整个 data，不显示文件图标；基础服务不使用自己的业务库，不因托管 PostgreSQL 显示业务数据库图标。旧示例目录 joplin-legacy 已按用户要求清理；Joplin 独占写入 joplin 目录。首页不展示完整权限表，后端继续拒绝跨应用写入、未登记读取及链接挂载。
 
 共享客户端允许多设备编辑，由 Syncthing 统一维护 NAS 上 shared；历史恢复是持有生命周期锁且暂停共享后生成新副本的维护例外。
 
@@ -85,7 +84,7 @@ WSL2 使用宿主 Windows 的物理 CPU 和内存；虚拟 CPU 由宿主调度�
 | Immich 相册 | immich | immich | immich / immich |
 | 文件浏览 | files | 无专属目录，只读引用全部数据 | 无 |
 | 共享同步盘 | shared | shared | 无 |
-| Joplin 笔记 | joplin | joplin；joplin-legacy 保留旧资料 | joplin / joplin |
+| Joplin 笔记 | joplin | joplin | joplin / joplin |
 | Git 仓库 | git | git | 无 |
 | 基础服务 | platform | 无 | 无业务库，负责托管共享 PostgreSQL |
 

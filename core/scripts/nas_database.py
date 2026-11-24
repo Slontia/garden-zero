@@ -4,15 +4,18 @@ sys.dont_write_bytecode=True
 import json,os,re,secrets,subprocess
 from pathlib import Path
 
+def application_databases(c):
+ return ('immich','joplin','platform_auth') if c.get('sso',{}).get('prepared') or (Path(c['host'])/'config/authentik.env').exists() else ('immich','joplin')
+
 def credentials(c,migrate=False):
  host=Path(c['host']);secret=host/'secrets'
- for name in ('immich-db-password','joplin-db-password'):
+ for name in (key+'-db-password' for key in application_databases(c)):
   path=secret/name
   if path.is_symlink():raise RuntimeError('Linked database credential refused')
   if not path.exists():
    fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
    with os.fdopen(fd,'w') as stream:stream.write(secrets.token_hex(32)+'\n')
- passwords={name:(secret/(name+'-db-password')).read_text().strip() for name in ('immich','joplin')}
+ passwords={name:(secret/(name+'-db-password')).read_text().strip() for name in application_databases(c)}
  if any(not re.fullmatch('[a-f0-9]{64}',v) for v in passwords.values()):raise RuntimeError('Unexpected application database credential format')
  remote=json.loads((host/'state/remote.json').read_text()) if (host/'state/remote.json').exists() else {}
  base=remote.get('knowledge','http://127.0.0.1:8082')
@@ -21,6 +24,9 @@ def credentials(c,migrate=False):
   path=host/'config'/name
   if path.is_symlink():raise RuntimeError('Linked application environment refused')
   if path.exists() and path.read_text()!=value:
+   existing=dict(line.split('=',1) for line in path.read_text().splitlines() if '=' in line and not line.startswith('#'))
+   expected=dict(line.split('=',1) for line in value.splitlines() if '=' in line)
+   if all(existing.get(k)==v for k,v in expected.items()):continue
    if not migrate:raise RuntimeError('Existing app environment differs; explicit database migration required: '+name)
    saved=host/'state'/(name+'.before-shared-postgres')
    if not saved.exists():saved.write_bytes(path.read_bytes());saved.chmod(0o600)
@@ -36,7 +42,7 @@ def sql(c,query,database='postgres',capture=False):
 
 def provision(c):
  """Only call while holding database_lock and after verified mount/readiness."""
- host=Path(c['host']);passwords={name:(host/'secrets'/(name+'-db-password')).read_text().strip() for name in ('immich','joplin')}
+ host=Path(c['host']);passwords={name:(host/'secrets'/(name+'-db-password')).read_text().strip() for name in application_databases(c)}
  if any(not re.fullmatch('[a-f0-9]{64}',v) for v in passwords.values()):raise RuntimeError('Invalid application database credentials')
  for name,password in passwords.items():
   sql(c,f"DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='{name}') THEN CREATE ROLE {name} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION; END IF; END $$; ALTER ROLE {name} WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD '{password}';")
@@ -64,4 +70,4 @@ def provision(c):
  EXECUTE format('ALTER TYPE public.%I OWNER TO immich',r.typname); END LOOP;
  END $$;
  COMMIT;""",'immich')
- (host/'state/shared-postgres.json').write_text(json.dumps({'schema':1,'databases':['immich','joplin'],'roles':['immich','joplin'],'isolated':True})+'\n')
+ (host/'state/shared-postgres.json').write_text(json.dumps({'schema':1,'databases':list(application_databases(c)),'roles':list(application_databases(c)),'isolated':True})+'\n')

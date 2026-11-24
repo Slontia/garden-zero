@@ -17,12 +17,117 @@ x-web: &web
     timeout: 5s
     start_period: 5s
 services:
+  cloud-gateway:
+    image: ${OPENLIST_IMAGE}
+    profiles: [cloud]
+    restart: 'no'
+    ports: ['127.0.0.1:5244:5244']
+    environment:
+      HTTP_PROXY: ''
+      HTTPS_PROXY: ''
+      ALL_PROXY: ''
+      NO_PROXY: '*'
+      RUN_ARIA2: 'false'
+      UMASK: '077'
+    volumes:
+      - type: bind
+        source: ${NAS_HOST}/state/cloud-gateway
+        target: /opt/openlist/data
+        bind: {create_host_path: false}
+    read_only: true
+    tmpfs: ['/tmp:size=64m']
+    mem_limit: 512m
+    security_opt: ['no-new-privileges:true']
+    cap_drop: [ALL]
+    logging: *logging
+    healthcheck:
+      test: [CMD, wget, -q, --spider, 'http://127.0.0.1:5244/ping']
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+  authentik-server:
+    image: ${AUTHENTIK_IMAGE}
+    profiles: [identity]
+    command: server
+    restart: 'no'
+    env_file:
+      - path: '${NAS_HOST}/config/authentik.env'
+        required: false
+    ports: ['127.0.0.1:9000:9000']
+    depends_on:
+      database: {condition: service_healthy}
+    volumes:
+      - type: bind
+        source: ${NAS_HOST}/state/authentik
+        target: /data
+        bind: {create_host_path: false}
+    mem_limit: 1280m
+    shm_size: 256mb
+    security_opt: ['no-new-privileges:true']
+    cap_drop: [ALL]
+    logging: *logging
+  authentik-worker:
+    image: ${AUTHENTIK_IMAGE}
+    profiles: [identity]
+    command: worker
+    restart: 'no'
+    env_file:
+      - path: '${NAS_HOST}/config/authentik.env'
+        required: false
+    depends_on:
+      database: {condition: service_healthy}
+    volumes:
+      - type: bind
+        source: ${NAS_HOST}/state/authentik
+        target: /data
+        bind: {create_host_path: false}
+    mem_limit: 768m
+    shm_size: 128mb
+    security_opt: ['no-new-privileges:true']
+    cap_drop: [ALL]
+    logging: *logging
+  identity-gateway:
+    ports: ['127.0.0.1:443:443', '127.0.0.1:8443:8443', '127.0.0.1:8444:8444', '127.0.0.1:8445:8445']
+    image: ${CADDY_IMAGE}
+    profiles: [identity]
+    restart: 'no'
+    environment: {NAS_PUBLIC_HOST: '${NAS_PUBLIC_HOST}'}
+    depends_on:
+      authentik-server: {condition: service_healthy}
+    networks:
+      default:
+        aliases: ['${NAS_PUBLIC_HOST}']
+    volumes:
+      - type: bind
+        source: ${NAS_HOST}/config/identity.Caddyfile
+        target: /etc/caddy/Caddyfile
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${NAS_HOST}/secrets/identity-tls
+        target: /credentials
+        read_only: true
+        bind: {create_host_path: false}
+    mem_limit: 96m
+    security_opt: ['no-new-privileges:true']
+    cap_drop: [ALL]
+    logging: *logging
+    healthcheck:
+      test: [CMD-SHELL, 'wget -qO- https://$${NAS_PUBLIC_HOST}/auth/-/health/ready/ >/dev/null']
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
   meta:
     <<: *web
     profiles: [meta]
-    environment: {NAS_MODE: meta, NAS_PUBLIC_ORIGIN: "${NAS_PUBLIC_ORIGIN:-}"}
+    environment: {NAS_MODE: meta, NAS_PUBLIC_ORIGIN: "${NAS_PUBLIC_ORIGIN:-}", NAS_SSO_CONFIG: "${NAS_SSO_CONFIG:-}"}
     ports: ['127.0.0.1:8080:8080']
     volumes:
+      - type: bind
+        source: ${NAS_DATA}
+        target: /data
+        read_only: true
+        bind: {create_host_path: false}
       - type: bind
         source: ${NAS_HOST}/secrets/admin.json
         target: /credentials/admin.json
@@ -38,20 +143,9 @@ services:
         target: /control
         read_only: true
         bind: {create_host_path: false}
-  files:
-    <<: *web
-    profiles: [files]
-    environment: {NAS_MODE: files}
-    ports: ['127.0.0.1:8081:8080']
-    volumes:
       - type: bind
-        source: ${NAS_DATA}
-        target: /data
-        read_only: true
-        bind: {create_host_path: false}
-      - type: bind
-        source: ${NAS_HOST}/secrets/admin.json
-        target: /credentials/admin.json
+        source: ${NAS_META_SSO_SOURCE:-${NAS_HOST}/secrets/admin.json}
+        target: /credentials/sso.json
         read_only: true
         bind: {create_host_path: false}
   joplin:
@@ -73,6 +167,11 @@ services:
         source: ${NAS_DATA}/joplin
         target: /data
         bind: {create_host_path: false}
+      - type: bind
+        source: ${NAS_HOST}/config/saml
+        target: /config/saml
+        read_only: true
+        bind: {create_host_path: false}
     depends_on:
       database: {condition: service_healthy}
     security_opt: ['no-new-privileges:true']
@@ -85,7 +184,7 @@ services:
       timeout: 5s
       start_period: 60s
   database:
-    profiles: [postgres, immich, knowledge]
+    profiles: [postgres, immich, knowledge, identity]
     image: ${POSTGRES_IMAGE}
     restart: 'no'
     environment:

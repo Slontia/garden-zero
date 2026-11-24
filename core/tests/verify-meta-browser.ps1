@@ -44,7 +44,7 @@ try {
     $socket.ConnectAsync([Uri]$page.webSocketDebuggerUrl, [Threading.CancellationToken]::None).GetAwaiter().GetResult() | Out-Null
     Invoke-CDP 'Page.enable' @{} | Out-Null
     Invoke-CDP 'Emulation.setDeviceMetricsOverride' @{width=1440;height=1000;deviceScaleFactor=1;mobile=$false} | Out-Null
-    Invoke-CDP 'Page.navigate' @{url='http://127.0.0.1:8080/'} | Out-Null
+    Invoke-CDP 'Page.navigate' @{url='http://127.0.0.1:8080/login/local'} | Out-Null
     for ($attempt=0; $attempt -lt 120; $attempt++) {
         Start-Sleep -Milliseconds 200
         if ((Evaluate "location.origin==='http://127.0.0.1:8080' && document.readyState==='complete'") -eq $true) { break }
@@ -55,7 +55,7 @@ try {
     $literal = $payload | ConvertTo-Json -Compress
     $login = Evaluate "fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json','X-NAS-Request':'1'},body:$literal}).then(r=>r.json())"
     if (-not $login.ok) { throw 'Test browser login failed' }
-    Invoke-CDP 'Page.reload' @{} | Out-Null
+    Invoke-CDP 'Page.navigate' @{url='http://127.0.0.1:8080/'} | Out-Null
     function Wait-Ready($expression) {
         for ($i=0; $i -lt 120; $i++) { Start-Sleep -Milliseconds 150; if ((Evaluate $expression) -eq $true) { return } }
         throw ('Page readiness timed out: ' + $expression)
@@ -70,7 +70,7 @@ try {
         $key = [string]$heading.viewport
         if ($script:headingStyles.ContainsKey($key) -and $script:headingStyles[$key] -ne $heading.styles) { throw ('Inconsistent page heading style: ' + $path) }
         $script:headingStyles[$key] = $heading.styles
-        if ((Evaluate "JSON.stringify([...document.querySelectorAll('.side-nav a')].map(a=>new URL(a.href).pathname))===JSON.stringify(['/apps','/backups','/containers','/logs']) && document.querySelectorAll('.side-nav [aria-current=page]').length===1 && new URL(document.querySelector('.side-nav [aria-current=page]').href).pathname==='$path'") -ne $true) { throw 'Four-page navigation mismatch' }
+        if ((Evaluate "JSON.stringify([...document.querySelectorAll('.side-nav a')].map(a=>new URL(a.href).pathname))===JSON.stringify(['/apps','/files','/backups','/containers','/logs']) && document.querySelectorAll('.side-nav [aria-current=page]').length===1 && new URL(document.querySelector('.side-nav [aria-current=page]').href).pathname==='$path'") -ne $true) { throw 'Five-page navigation mismatch' }
     }
     function Screenshot($name) { $shot=Invoke-CDP 'Page.captureScreenshot' @{format='png';captureBeyondViewport=$false}; [IO.File]::WriteAllBytes("$taskDir\$name.png",[Convert]::FromBase64String($shot.data)) }
     Wait-Ready "document.querySelectorAll('#modules .app-row').length===5 && !document.querySelector('#message').textContent"
@@ -113,13 +113,13 @@ try {
     Screenshot 'git-details'
     $draft = Evaluate "(async()=>{appViews.shared.card.open=true;document.querySelector('#device-connect').open=true;document.querySelector('#local-path').value='~/NAS/draft';await refresh();return document.querySelector('#local-path').value==='~/NAS/draft'&&document.querySelector('#device-connect').open&&appViews.shared.card.open})()"
     if (-not $draft) { throw 'Sync binding draft or expanded state lost on refresh' }
-    Navigate '/backups' "document.querySelector('#mirror-details')?.children.length>0"
+    Navigate '/backups' "!!document.querySelector('#disk-target')?.textContent"
     Check-Navigation '/backups'
     if ((Evaluate "!document.querySelector('.resource-overview,#disk,#data-permissions') && document.querySelector('#mirror-details').textContent.includes('\u5b8c\u6574\u5386\u53f2')") -ne $true) { throw 'Backup page contains redundant panels or missing history' }
     Screenshot 'backups-desktop'
     $choice = Evaluate "(async()=>{window.choiceCalls=[];submitAction=async d=>choiceCalls.push(d);await act('backup');let dialog=document.querySelector('#backup-choice');if(!dialog.open||choiceCalls.length)return false;cancelBackup();if(choiceCalls.length)return false;await act('backup');await confirmBackup(false);await act('hdd-backup');await confirmBackup(true);return choiceCalls.length===2&&choiceCalls[0].purge_history===false&&choiceCalls[1].purge_history===true})()"
     if (-not $choice) { throw 'Explicit history choices failed' }
-    Navigate '/containers' "document.querySelectorAll('#system-rows tr').length===11"
+    Navigate '/containers' "document.querySelectorAll('#system-rows tr').length>=13"
     Check-Navigation '/containers'
     Evaluate "document.querySelector('#system-filter').value='immich';renderSystem()" | Out-Null
     if ((Evaluate "document.querySelectorAll('#system-rows tr').length===3") -ne $true) { throw 'Container application filter failed' }
@@ -134,7 +134,7 @@ try {
     Navigate '/logs?app=knowledge' "document.querySelector('#log-output')?.dataset.loaded==='true'&&document.querySelector('#log-output').dataset.app==='joplin'"
     Navigate '/logs?app=syncthing' "document.querySelector('#log-output')?.dataset.loaded==='true'&&document.querySelector('#log-output').dataset.app==='shared'"
     Invoke-CDP 'Emulation.setDeviceMetricsOverride' @{width=390;height=844;deviceScaleFactor=1;mobile=$true} | Out-Null
-    foreach ($entry in @(@('/apps',"document.querySelectorAll('#modules .app-row').length===5"),@('/backups',"document.querySelector('#mirror-details')?.children.length>0"),@('/containers',"document.querySelectorAll('#system-rows tr').length===11"),@('/logs',"document.querySelector('#log-output')?.dataset.loaded==='true'"))) {
+    foreach ($entry in @(@('/apps',"document.querySelectorAll('#modules .app-row').length===5"),@('/backups',"!!document.querySelector('#disk-target')?.textContent"),@('/containers',"document.querySelectorAll('#system-rows tr').length>=13"),@('/logs',"document.querySelector('#log-output')?.dataset.loaded==='true'"))) {
         Navigate $entry[0] $entry[1]
         Check-Navigation $entry[0]
         if ((Evaluate "document.documentElement.scrollWidth<=innerWidth") -ne $true) { throw ('Mobile overflow '+$entry[0]) }

@@ -44,7 +44,7 @@ try:
    time.sleep(1)
   else:raise RuntimeError('Recovery database readiness timeout')
   databases=manifest.get('databases',{'immich':{'dump':'database.dump','tables':manifest['tables']}})
-  if set(databases)-{'immich','joplin'}:raise RuntimeError('Unregistered database in recovery manifest')
+  if set(databases)-{'immich','joplin','platform_auth'}:raise RuntimeError('Unregistered database in recovery manifest')
   if phase=='restore':
    if 'database-roles.sql' in manifest['files']:
     roles=(backup/'database-roles.sql').read_text().replace('CREATE ROLE postgres;','')

@@ -12,7 +12,7 @@ def main():
  name=status.get('Self',{}).get('DNSName','').rstrip('.')
  if not name:raise RuntimeError('Tailscale DNS identity missing')
  current=json.loads(subprocess.check_output(TS+['serve','status','--json'],text=True))
- routes=[('https',443,'http://127.0.0.1:8080'),('https',8443,'http://127.0.0.1:8081'),('https',8444,'http://127.0.0.1:8082'),('https',8445,'http://127.0.0.1:2283'),('http',80,'http://127.0.0.1:8080'),('tcp',2222,'tcp://127.0.0.1:2222'),('tcp',445,'tcp://127.0.0.1:1445')]
+ routes=[('https',443,'http://127.0.0.1:8080'),('https',8444,'http://127.0.0.1:8082'),('https',8445,'http://127.0.0.1:2283'),('http',80,'http://127.0.0.1:8080'),('tcp',2222,'tcp://127.0.0.1:2222'),('tcp',445,'tcp://127.0.0.1:1445')]
  if c.get('file_access',{}).get('mode')=='full_sync':routes.append(('tcp',22000,'tcp://127.0.0.1:22000'))
  else:routes.append(('tcp-writer',1446,'tcp://127.0.0.1:1446'))
  if any(current.get('AllowFunnel',{}).get(name+':'+str(port)) for _,port,_ in routes):raise RuntimeError('A NAS port is configured for public Funnel; inspect before private setup')
@@ -27,7 +27,9 @@ def main():
    if entry!={('HTTPS' if protocol=='https' else 'HTTP'):True}:raise RuntimeError('Existing HTTP listener differs: '+str(port))
    web=current.get('Web',{}).get(name+':'+str(port),{})
    handlers=web.get('Handlers',{})
-   if handlers.get('/')!={'Proxy':target} or set(handlers)!={'/'}:raise RuntimeError('Existing web routes differ; inspect before replacement: '+str(port))
+   expected_handlers={'/':{'Proxy':target}}
+   if port==443 and c.get('sso',{}).get('clients_prepared'):expected_handlers['/auth/']={'Proxy':'http://127.0.0.1:9000/auth/'}
+   if handlers!=expected_handlers:raise RuntimeError('Existing web routes differ; inspect before replacement: '+str(port))
  host=Path(c['host']);path=host/'state/remote.json';prior=json.loads(path.read_text()) if path.exists() else {}
  with lock():
   for protocol,port,target in routes:

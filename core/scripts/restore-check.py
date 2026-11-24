@@ -38,7 +38,7 @@ try:
   time.sleep(1)
  else:raise RuntimeError('Restore DB readiness timeout')
  databases=manifest.get('databases',{'immich':{'dump':'database.dump','tables':manifest.get('tables')}})
- if set(databases)-{'immich','joplin'}:raise RuntimeError('Unregistered database in restore manifest')
+ if set(databases)-{'immich','joplin','platform_auth'}:raise RuntimeError('Unregistered database in restore manifest')
  if 'database-roles.sql' in manifest['files']:
   # Existing bootstrap role is retained; application roles are restored without passwords.
   roles=(backup/'database-roles.sql').read_text().replace('CREATE ROLE postgres;','')

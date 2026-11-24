@@ -6,7 +6,7 @@
 
 客户端「设置 → 同步」选择 Joplin Server，地址使用 Meta 的 Joplin 详情所示 HTTPS 地址。当前沿用旧知识库的私人 8444 入口与本机 8082 端口，无需增加访问控制端口。初始日常同步账户及密码在 `C:\nas\system\secrets\joplin-user.json`，管理员账户在相邻 `joplin-admin.json`。不要将这些文件提交到 Git 或发送到聊天。更改密码后更新自己的客户端；自动启动不会强制重置用户修改后的密码。
 
-浏览器入口是 Joplin 账户管理。旧资料目录 `data/joplin-legacy/` 原样保留，后续可由客户端导入 Markdown；没有自动导入、删除或覆盖。
+浏览器入口是 Joplin 账户管理。旧示例目录 `data/joplin-legacy/` 已按用户要求清理；历史完整备份保留。
 
 ## 部署结构
 

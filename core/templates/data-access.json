@@ -35,12 +35,6 @@
       "purpose": "Git 裸仓库；通过 SSH 推送与拉取"
     },
     {
-      "path": "joplin-legacy",
-      "writer": "administrator",
-      "readers": [],
-      "purpose": "Joplin 旧 Markdown 与附件保留目录；尚未通过客户端导入，由主机管理员维护"
-    },
-    {
       "path": "shared",
       "writer": "syncthing",
       "readers": [],

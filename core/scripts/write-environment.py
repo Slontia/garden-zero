@@ -5,8 +5,8 @@ _nas_sys.dont_write_bytecode=True
 import argparse,json,os,subprocess
 from pathlib import Path
 from nasctl import cfg,DOCKER
-LOCAL={'NAS_WEB_IMAGE','NAS_SERVICES_IMAGE'}
-EXPECTED=LOCAL|{'IMMICH_SERVER_IMAGE','IMMICH_ML_IMAGE','POSTGRES_IMAGE','VALKEY_IMAGE','TAILSCALE_IMAGE','SYNCTHING_IMAGE','RESTIC_IMAGE','JOPLIN_IMAGE'}
+LOCAL={'NAS_WEB_IMAGE','NAS_SERVICES_IMAGE','CLOUD_BACKUP_IMAGE'}
+EXPECTED=LOCAL|{'OPENLIST_IMAGE','RCLONE_IMAGE','IMMICH_SERVER_IMAGE','IMMICH_ML_IMAGE','POSTGRES_IMAGE','VALKEY_IMAGE','TAILSCALE_IMAGE','SYNCTHING_IMAGE','RESTIC_IMAGE','JOPLIN_IMAGE','AUTHENTIK_IMAGE','CADDY_IMAGE'}
 def resolve(c):
  locks=json.loads((Path(c['root'])/'core/templates/versions.lock.json').read_text());versions={};missing=[]
  if set(locks)!=EXPECTED:raise RuntimeError('Incomplete or unexpected image lock manifest')
@@ -30,9 +30,12 @@ def generate(c,*,write=True):
   for line in (host/'config/compose.env').read_text().splitlines():
    if '=' in line:
     k,v=line.split('=',1);existing[k]=v
- values={'NAS_PUBLIC_ORIGIN':remote.get('meta',''),'NAS_HOST':c['host'],'NAS_DATA':c['data'],'NAS_HTTP_PROXY':existing.get('NAS_HTTP_PROXY',os.environ.get('http_proxy',os.environ.get('HTTP_PROXY',''))),'NAS_HTTPS_PROXY':existing.get('NAS_HTTPS_PROXY',os.environ.get('https_proxy',os.environ.get('HTTPS_PROXY',''))),**{k:v['image'] for k,v in versions.items()}}
+ values={'NAS_PUBLIC_ORIGIN':remote.get('meta',''),'NAS_PUBLIC_HOST':remote.get('name','nas.invalid'),'NAS_HOST':c['host'],'NAS_DATA':c['data'],'NAS_HTTP_PROXY':existing.get('NAS_HTTP_PROXY',os.environ.get('http_proxy',os.environ.get('HTTP_PROXY',''))),'NAS_HTTPS_PROXY':existing.get('NAS_HTTPS_PROXY',os.environ.get('https_proxy',os.environ.get('HTTPS_PROXY',''))),**{k:v['image'] for k,v in versions.items()}}
  if any(any(ch in value for ch in '\r\n$') for value in values.values()):raise RuntimeError('Environment value requires explicit escaping; refusing write')
+ if c.get('sso',{}).get('enabled'):
+  values.update({'NAS_SSO_CONFIG':'/credentials/sso.json','NAS_META_SSO_SOURCE':str(host/'config/sso-meta.json'),'NAS_FILES_SSO_SOURCE':str(host/'config/sso-files.json')})
  if write:
+  (host/'config/saml').mkdir(exist_ok=True)
   # Actual per-host resolution is private. Public version locks are never rewritten.
   for path,data in [(host/'config/compose.env',''.join(k+'='+v+'\n' for k,v in values.items())),(Path(c['host'])/'config/versions.json',json.dumps(versions,indent=2)+'\n')]:
    if path.is_symlink():raise RuntimeError('Environment/configuration target is a symlink')

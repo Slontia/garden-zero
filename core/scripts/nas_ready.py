@@ -1,7 +1,7 @@
 """Bounded, authenticated management readiness checks; no application state changes."""
 import sys
 sys.dont_write_bytecode=True
-import http.cookiejar,json,time,urllib.error,urllib.request
+import http.cookiejar,json,time,urllib.error,urllib.request,urllib.parse
 from pathlib import Path
 
 def wait_meta_ready(config,modules=('meta',),timeout=120,interval=2):
@@ -34,6 +34,17 @@ def wait_meta_ready(config,modules=('meta',),timeout=120,interval=2):
    if status.get('storage_blocked'):raise RuntimeError('NAS storage is blocked')
    pending=sorted(name for name in required if status.get('modules',{}).get(name,{}).get('state')!='ready')
    if pending:raise RuntimeError('Modules not ready: '+', '.join(pending))
+   if config.get('sso',{}).get('enabled'):
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+     def redirect_request(self,*args,**kwargs):return None
+    probe=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect())
+    try:
+     with probe.open('http://127.0.0.1:'+str(port)+'/sso/login',timeout=min(5,max(0.05,deadline-time.monotonic()))) as response:raise RuntimeError('Unified login did not redirect to the identity provider')
+    except urllib.error.HTTPError as response:
+     try:
+      location=urllib.parse.urlsplit(response.headers.get('Location',''));expected=urllib.parse.urlsplit(config['sso']['origin'])
+      if response.code!=302 or location.scheme!='https' or location.netloc!=expected.netloc or not location.path.startswith('/auth/'):raise RuntimeError('Unified login discovery is not ready')
+     finally:response.close()
    print('Management ready: authenticated dashboard, host control and requested modules verified.',flush=True)
    return {'state':'ready','attempts':attempts,'modules':sorted(required)}
   except urllib.error.HTTPError as error:

@@ -2,7 +2,7 @@
 """Cloud versioned backup and authenticated incremental local mirror."""
 import sys
 sys.dont_write_bytecode=True
-import argparse,datetime,fcntl,json,os,re,secrets,subprocess
+import argparse,datetime,fcntl,json,os,re,secrets,subprocess,signal
 from pathlib import Path
 from nas_mirror import Mirror,Snapshot,unsafe,atomic
 PS='/mnt/c/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe'
@@ -12,9 +12,11 @@ def mirror_target(c):
  if len(parts)!=4 or parts[:2]!=('/','mnt') or len(parts[2])!=1 or root.is_symlink() or root.is_junction():raise RuntimeError('Expected a dedicated real /mnt/<drive>/<folder> mirror directory')
  drive=parts[2].lower();source_drive=Path(c['root']).parts[2]
  if drive in ('c',source_drive) or not c.get('hdd_guid') or root.name.casefold()!='nas-backup':raise RuntimeError('Unsafe mirror target; separate configured nas-backup volume required')
- code="[Console]::OutputEncoding=[Text.Encoding]::UTF8; $v=Get-Volume -DriveLetter '"+drive+"' -ErrorAction Stop; $p=Get-Item -LiteralPath '"+drive+":\\nas-backup' -Force -ErrorAction Stop; @{guid=$v.UniqueId;filesystem=$v.FileSystem;attributes=[int]$p.Attributes;container=$p.PSIsContainer}|ConvertTo-Json -Compress"
+ code="[Console]::OutputEncoding=[Text.Encoding]::UTF8; $v=Get-Volume -DriveLetter '"+drive+"' -ErrorAction Stop; $p=Get-Item -LiteralPath '"+drive+":\\nas-backup' -Force -ErrorAction Stop; @{guid=$v.UniqueId;filesystem=$v.FileSystem;label=$v.FileSystemLabel;attributes=[int]$p.Attributes;container=$p.PSIsContainer}|ConvertTo-Json -Compress"
  result=json.loads(subprocess.check_output([PS,'-NoProfile','-NonInteractive','-Command',code],text=True))
+ c['_backup_volume_label']=result.get('label') or c.get('hdd_label')
  if c['hdd_guid'].lower() not in result['guid'].lower() or result['filesystem']!='NTFS' or not result['container'] or result['attributes']&1024:raise RuntimeError('Wrong mirror volume identity/filesystem or linked target')
+ atomic(Path(c['host'])/'state/hdd-volume.json',{'uid':c['hdd_guid'],'name':result.get('label') or '未命名磁盘'})
  mount=Path('/mnt')/drive
  # A drive absent during WSL boot may not have been automounted. Never create a fallback target.
  mounted=subprocess.run(['mountpoint','-q',str(mount)]).returncode==0
@@ -54,7 +56,14 @@ def hdd(c,operation,purge_history=False):
   subprocess.run(['/mnt/c/WINDOWS/System32/attrib.exe','+H',win],check=True,stdout=subprocess.DEVNULL)
   return result
 
-def cloud(c,operation):
+def cloud(c,operation,identifiers=None,automatic=False):
+ if c.get('cloud_bridge_prepared'):
+  from nas_cloud import metadata,backup
+  if metadata(c)['accounts']:
+   if operation!='backup':raise RuntimeError('Managed cloud accounts are verified through the backup page')
+   completed=sorted(p for p in Path(c['backup_root']).iterdir() if re.fullmatch(r'\d{8}-\d{6}',p.name) and p.is_dir() and (p/'COMPLETE').is_file())
+   if not completed:raise RuntimeError('No COMPLETE consistent backup set')
+   with Snapshot(completed[-1]):return backup(c,completed[-1],identifiers,automatic)
  host=Path(c['host']);repo=c.get('cloud_repository')
  if not repo or not repo.startswith(('s3:','sftp:','rest:','b2:','azure:','rclone:')):raise RuntimeError('Explicit supported remote cloud repository required')
  credentials=host/'secrets/cloud.env'
@@ -70,18 +79,26 @@ def cloud(c,operation):
  return {'mode':'encrypted_versioned_repository'}
 
 def main():
- parser=argparse.ArgumentParser();parser.add_argument('target',choices=['cloud','hdd']);parser.add_argument('operation',choices=['init','backup','check','snapshots']);parser.add_argument('--purge-history',action='store_true');args=parser.parse_args()
+ parser=argparse.ArgumentParser();parser.add_argument('target',choices=['cloud','hdd']);parser.add_argument('operation',choices=['init','backup','check','snapshots']);parser.add_argument('--purge-history',action='store_true');parser.add_argument('--account',action='append');parser.add_argument('--automatic',action='store_true');args=parser.parse_args()
  if args.purge_history and (args.target!='hdd' or args.operation!='backup'):raise RuntimeError('--purge-history is only valid for an HDD backup')
  c=json.loads(Path('/mnt/c/nas/system/config/config.json').read_text());state=Path(c['host'])/'state'/(args.target+'-backup.json')
  previous=json.loads(state.read_text()) if state.exists() else {};record={'state':'running','operation':args.operation,'started':datetime.datetime.now(datetime.timezone.utc).isoformat(),'last_success':previous.get('last_success')}
  atomic(state,record)
+ from nas_backup_history import begin,finish
+ def interrupted(signum,frame):raise InterruptedError('Backup interrupted')
+ signal.signal(signal.SIGTERM,interrupted)
+ history_path=begin(c,record,previous) if args.target=='hdd' and args.operation=='backup' else None
  try:
-  result=hdd(c,args.operation,args.purge_history) if args.target=='hdd' else cloud(c,args.operation)
+  result=hdd(c,args.operation,args.purge_history) if args.target=='hdd' else cloud(c,args.operation,args.account,args.automatic)
   now=datetime.datetime.now(datetime.timezone.utc).isoformat();record.update(state='interrupted' if result.get('pending_source') else 'success',time=now,**result)
-  if args.operation=='backup':record['last_success']=now
-  atomic(state,record);print(json.dumps(record,ensure_ascii=False))
- except Exception as error:
-  record.update(state='failed',error=str(error));atomic(state,record);raise
+  if args.operation=='backup' and record['state']=='success':record['last_success']=now
+  atomic(state,record)
+  if history_path:finish(c,history_path,record)
+  print(json.dumps(record,ensure_ascii=False))
+ except (Exception,KeyboardInterrupt) as error:
+  record.update(state='interrupted' if isinstance(error,(InterruptedError,KeyboardInterrupt)) else 'failed',time=datetime.datetime.now(datetime.timezone.utc).isoformat(),error=str(error));atomic(state,record)
+  if history_path:finish(c,history_path,record)
+  raise
 if __name__=='__main__':
  try:main()
  except Exception as error:raise SystemExit('External backup refused: '+str(error))

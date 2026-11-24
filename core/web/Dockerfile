@@ -1,7 +1,10 @@
 ARG NAS_WEB_BASE_IMAGE=python:3.13-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90
 FROM ${NAS_WEB_BASE_IMAGE}
+USER 0
 WORKDIR /app
-COPY app.py connect.js meta.css navigation.html management.js dashboard.html dashboard.js backups.html backups.js containers.html containers.js logs.html logs.js /app/
+COPY requirements.txt /app/
+RUN python -m pip install --no-cache-dir -r /app/requirements.txt
+COPY app.py oidc.py connect.js meta.css navigation.html management.js dashboard.html dashboard.js backups.html backups.js containers.html containers.js logs.html logs.js /app/
 USER 1000:0
 EXPOSE 8080
 HEALTHCHECK --interval=20s --timeout=5s --start-period=10s CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"

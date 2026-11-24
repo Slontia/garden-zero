@@ -27,7 +27,7 @@ code,_=req('/api/login',{'username':'admin','password':(host/'secrets/admin-pass
 record=json.loads(statefile.read_text()) if statefile.exists() else {}
 try:
  if phase=='read':
-  system=get('/api/system');check('eleven NAS containers with actual ownership',len(system['containers'])==11 and sum(r['app']=='immich' for r in system['containers'])==3)
+  system=get('/api/system');check('registered NAS containers have actual ownership',all(r['app'] in {'immich','files','shared','joplin','git','platform'} for r in system['containers']) and sum(r['app']=='immich' for r in system['containers'])==3 and any(r['service']=='meta' for r in system['containers']))
   check('running containers have real CPU memory uptime',all(r['cpu_percent'] is not None and r['memory_bytes'] is not None and r['uptime_seconds']>=0 for r in system['containers'] if r['state']=='running'))
   check('actual mount access without environment or secret contents',any(m['read_only'] for r in system['containers'] for m in r['mounts']) and all('Env' not in r and 'Config' not in r for r in system['containers']))
   check('app and container log scopes work',bool(get('/api/app-logs/immich')['logs']) and bool(get('/api/container-logs/database')['logs']))
