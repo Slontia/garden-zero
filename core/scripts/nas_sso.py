@@ -29,10 +29,26 @@ def prepare(c):
  (host/'config/config.json').write_text(json.dumps(c,indent=2)+'\n')
  return renew_certificate(c,reload=False)
 
+def wait_network_identity(name,timeout=60,interval=1):
+ """A running daemon/socket is insufficient: cert requires its initialized netmap."""
+ from nasctl import DOCKER
+ deadline=time.monotonic()+timeout
+ while time.monotonic()<deadline:
+  try:
+   result=subprocess.run(DOCKER+['exec','nas-tailscale-1','tailscale','status','--json'],capture_output=True,text=True,timeout=5)
+   status=json.loads(result.stdout) if result.returncode==0 else {}
+  except (OSError,subprocess.TimeoutExpired,ValueError):status={}
+  backend=status.get('BackendState')
+  if backend in ('NeedsLogin','NeedsMachineAuth'):raise RuntimeError('Tailscale requires device authorization before identity certificate renewal')
+  if backend=='Running' and (status.get('Self') or {}).get('DNSName','').rstrip('.').lower()==name.rstrip('.').lower():return
+  time.sleep(interval)
+ raise RuntimeError('Tailscale network identity did not become ready before identity certificate renewal')
+
 def renew_certificate(c,reload=True):
  from nasctl import DOCKER
  host=Path(c['host']);remote=json.loads((host/'state/remote.json').read_text());name=remote['name'];state=host/'state/tailscale';directory=host/'secrets/identity-tls';directory.mkdir(mode=0o700,exist_ok=True)
  if directory.is_symlink():raise RuntimeError('Linked certificate directory refused')
+ wait_network_identity(name)
  subprocess.run(DOCKER+['exec','nas-tailscale-1','tailscale','cert','--cert-file=/var/lib/tailscale/identity.crt','--key-file=/var/lib/tailscale/identity.key',name],check=True,stdout=subprocess.DEVNULL)
  changed=False
  for source,target in [('identity.crt','tls.crt'),('identity.key','tls.key')]:
