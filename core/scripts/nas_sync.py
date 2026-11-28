@@ -100,7 +100,7 @@ def history(c):
 
 def restore_copy(c,name,version):
  """Publish a new copy from an API-listed immutable archive. Never overwrite original/history."""
- import contextlib,datetime,hashlib,os,secrets,shutil,stat,tempfile
+ import contextlib,datetime,hashlib,os,secrets,shutil,stat
  from nasctl import volume
  parts=relative_parts(name)
  if not isinstance(version,str) or len(version)>80:raise RuntimeError('历史版本标识无效')
@@ -119,13 +119,19 @@ def restore_copy(c,name,version):
  def directory(parent,name):return os.open(name,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=parent)
  root=Path(c['data'])/'shared'
  try:
-  rootfd=os.open(root,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW);fds.append(rootfd);fd=rootfd
-  for part in archive_parts[:-1]:fd=directory(fd,part);fds.append(fd)
+  rootfd=os.open(root,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW);fds.append(rootfd);owner=os.fstat(rootfd)
+  archivefd=directory(rootfd,'.stversions');fds.append(archivefd);fd=archivefd
+  if os.fstat(archivefd).st_dev!=os.fstat(rootfd).st_dev:raise RuntimeError('历史目录与共享目录不在同一文件系统，拒绝非原子恢复')
+  for part in archive_parts[1:-1]:fd=directory(fd,part);fds.append(fd)
   src=os.open(archive_parts[-1],os.O_RDONLY|os.O_NOFOLLOW,dir_fd=fd);fds.append(src);before=os.fstat(src)
   if not stat.S_ISREG(before.st_mode) or before.st_nlink!=1 or before.st_size!=size:raise RuntimeError('历史文件类型或大小已变化，请重新核实')
-  # A completed file is staged outside the synchronized directory and atomically published.
+  # Stage inside the ignored version directory on the destination filesystem.
+  # Runtime/code may be on another disk; atomic rename must not cross filesystems.
   if not was_paused:pause(c,True);paused_by_us=True
-  staging=Path(c['root'])/'system/runtime';tmpfd,temp=tempfile.mkstemp(prefix='restore-copy-',dir=staging)
+  temp='.restore-copy-'+secrets.token_hex(16)
+  tmpfd=os.open(temp,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600,dir_fd=archivefd)
+  try:os.fchown(tmpfd,owner.st_uid,owner.st_gid)
+  except BaseException:os.close(tmpfd);raise
   digest=hashlib.sha256()
   with os.fdopen(tmpfd,'wb') as out,os.fdopen(os.dup(src),'rb') as source:
    while block:=source.read(1024*1024):out.write(block);digest.update(block)
@@ -133,10 +139,10 @@ def restore_copy(c,name,version):
   after=os.fstat(src)
   if (before.st_size,before.st_mtime_ns)!=(after.st_size,after.st_mtime_ns):raise RuntimeError('历史文件在恢复时发生变化，共享保持暂停')
   recovery='Recovered-'+datetime.datetime.now().strftime('%Y%m%d-%H%M%S')+'-'+secrets.token_hex(5)
-  os.mkdir(recovery,mode=0o750,dir_fd=rootfd);dest=directory(rootfd,recovery);fds.append(dest)
-  for part in parts[:-1]:os.mkdir(part,mode=0o750,dir_fd=dest);dest=directory(dest,part);fds.append(dest)
+  os.mkdir(recovery,mode=0o750,dir_fd=rootfd);dest=directory(rootfd,recovery);fds.append(dest);os.fchown(dest,owner.st_uid,owner.st_gid)
+  for part in parts[:-1]:os.mkdir(part,mode=0o750,dir_fd=dest);dest=directory(dest,part);fds.append(dest);os.fchown(dest,owner.st_uid,owner.st_gid)
   # Unique recovery root is created exclusively; NAS sync is paused and no SMB writer exists.
-  os.rename(temp,parts[-1],dst_dir_fd=dest);temp=None
+  os.rename(temp,parts[-1],src_dir_fd=archivefd,dst_dir_fd=dest);temp=None
   result={'restored_path':recovery+'/'+name,'size':size,'sha256':digest.hexdigest(),'sync_resumed':False}
   if not was_paused:
    try:volume(c);pause(c,False);result['sync_resumed']=True
@@ -146,5 +152,5 @@ def restore_copy(c,name,version):
   raise RuntimeError('恢复未完成：'+str(e)+('；NAS 共享已暂停，请核实后恢复同步' if paused_by_us else '')) from None
  finally:
   if temp:
-   with contextlib.suppress(FileNotFoundError):os.unlink(temp)
+   with contextlib.suppress(FileNotFoundError):os.unlink(temp,dir_fd=archivefd)
   for fd in reversed(fds):os.close(fd)

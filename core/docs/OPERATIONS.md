@@ -2,6 +2,14 @@
 
 本手册针对 Windows + WSL2 中当前实例，不构成新主机部署或跨架构认证。入口、账号文件和数据位置见仓库 README；不要把账号文件复制到聊天或公共仓库。
 
+## 原生 Btrfs 实例
+
+当前代码与运行数据位于 `C:\nas`，数据 SSD 由 USBIPD 接入 WSL，数据子卷挂载为 `/run/nas/storage/data`，不再使用 D 盘的 NTFS 目录。核对实际配置中的 `data_storage`，不要根据设备字母猜盘。历史 NTFS 故障记录仅供参考。
+
+Windows 登录入口先以普通权限接入已注册 USB 实例，再启动 NAS session；首次驱动安装、共享，以及 Windows 存储驱动占用时的独占绑定需管理员操作，只处理已核验的 NAS 设备。管理员启动的 WSL 进程可能处于不同挂载环境，运维检查须进入 Docker 的挂载命名空间，沿用 `host-command.sh` 的入口，不以某次 Windows 启动的 `/mnt/f` 视图判定备份不存在。
+
+完整停机须确认 `/run/nas/storage` 和 `/run/nas/database` 均已正常卸载，对应数据库 loop 已释放，才可 USB detach 或拔盘。缺盘、卷身份不匹配或只读时拒绝启动；不创建空 data 目录代替原卷，不 force/lazy 卸载。共享数据库继续位于内置盘，不重新初始化账号。
+
 ## 日常运行
 
 Meta 查看磁盘、模块、备份及运行观察。Joplin 笔记与 Immich 共用 PostgreSQL，角色和数据库隔离；数据库现为基础服务，不随相册关闭。普通文件的 SMB/网页入口保持只读；上传照片通过 Immich，提交仓库通过 Git SSH。Syncthing 的 shared 完整同步已接入 Mac；Meta 支持网页绑定/解绑、进度、冲突查看和历史恢复副本。网盘接入、外接备份盘在线状态及最近成功时间以管理台为准。独占 SMB 写入已停用。
@@ -11,10 +19,10 @@ Meta 查看磁盘、模块、备份及运行观察。Joplin 笔记与 Immich 共
 ## 正常停止、弹盘和 WSL 重启
 
 1. 保存客户端正在编辑的内容，停止上传、Git push 等写入操作。
-2. 在 WSL 仓库目录执行 `bash stop.sh all`，等待返回成功。Meta 的“停止全部业务”保留远程和管理组件，不能作为弹盘完成标记。
+2. 在 WSL 仓库目录执行 `bash core/stop.sh all`，等待返回成功。Meta 的“停止全部业务”保留远程和管理组件，不能作为弹盘完成标记。
 3. 用 `findmnt /run/nas/database` 和 `sudo -n losetup -j <config.json 中的实际 image 路径>` 确认数据库已卸载、对应 loop 无残留；不要只检查默认旧文件名。
 4. 在 Windows 使用安全弹出，完成后才拔 SSD。关闭/重启共享 WSL 也先执行完整停机，避免影响 NAS 正在写入的数据库。
-5. SSD 重连后确认卷身份正确，再执行 `bash start.sh`。登录启动任务提供登录后的启动，不承诺无人登录或 Windows 睡眠期间可用。
+5. SSD 重连后确认卷身份正确，再执行 `bash core/start.sh`。登录启动任务提供登录后的启动，不承诺无人登录或 Windows 睡眠期间可用。
 
 命令失败时保留现场，不使用 `umount -f`、`umount -l`、kill 数据库或删除镜像来强制完成弹盘。
 

@@ -49,15 +49,15 @@ garden-zero/                  # Git 仓库根目录
 └── system/                   # 配置和运行数据，不提交 Git
 ```
 
-文档以 `D:\nas` 为部署根目录示例。用户内容保留在数据盘，数据库、凭据、缓存和本机备份位于 `C:\nas\system`，通过 `system` 下的目录联接访问。部分同盘暂存和历史归档留在数据盘。共享 WSL、Docker 和 Linux `/run` 不迁入 NAS 目录。详见 [目录分工](core/docs/DIRECTORY-LAYOUT.md)。
+当前实例的源码与 Git 仓库位于 `C:\nas`，运行数据位于 `C:\nas\system`；用户内容位于独立 SSD 的原生 Btrfs `data` 子卷，受控挂载为 `/run/nas/storage/data`。仓库根目录的 `data` 是供 WSL 运维浏览的符号链接，应用直接挂载经过卷身份校验的真实数据路径。Windows 不再通过原 D 盘盘符访问这些文件。共享 WSL、Docker 不迁入 NAS 目录。详见 [目录分工](core/docs/DIRECTORY-LAYOUT.md)和 [原生 Btrfs 迁移](core/docs/NATIVE-BTRFS-MIGRATION.md)。
 
 ## 部署前阅读
 
-当前目标环境：Windows、启用 systemd 的 WSL2、WSL 内原生 Docker Engine 和独立 NTFS 数据盘。同一宿主仅支持一个实例。
+当前实例环境：Windows、启用 systemd 的 WSL2、WSL 内原生 Docker Engine、经 USBIPD 原生接入的 Btrfs 数据 SSD。同一宿主仅支持一个实例。新环境初始化仍按源码部署文档的既有流程准备；原生物理盘转换需遵守单独的备份与身份验证步骤，不会在初始化时自动执行。
 
 ```bash
-git clone git@github.com:slontia/garden-zero.git /mnt/d/nas
-cd /mnt/d/nas
+git clone git@github.com:Slontia/garden-zero.git /mnt/c/nas
+cd /mnt/c/nas
 ```
 
 克隆源码不会自动创建账号、格式化磁盘或启动服务。已有 NAS 实例不要重复初始化。新环境请按 [源码部署与初始化边界](core/docs/SOURCE-DEPLOYMENT.md)逐步准备；实际配置由准备流程生成，不要直接把 `.env.example` 当作部署配置。

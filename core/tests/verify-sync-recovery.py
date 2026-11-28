@@ -24,7 +24,8 @@ def main():
   parts=sync.relative_parts(name);leaf=parts[-1];dot=leaf.rfind('.');tagged=leaf[:dot]+'~20260102-123456'+leaf[dot:] if dot>=0 else leaf+'~20260102-123456'
   p=archive.joinpath(*parts[:-1],tagged);p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(old)
   q=shared/name;q.parent.mkdir(parents=True,exist_ok=True);q.write_bytes(current);catalog[name]=[{'versionTime':version,'modTime':version,'size':len(old)}];return p,q
- with patch.object(sync,'api',side_effect=api):
+ # Filesystem/API fixture only; storage identity has dedicated tests.
+ with patch('nasctl.volume'),patch.object(sync,'api',side_effect=api):
   for name in ('document.txt','nested/照片.tar.gz','.env'):
    source,original=add(name);result=sync.restore_copy(fixture,name,version)
    assert (shared/result['restored_path']).read_bytes()==b'old contents'
@@ -50,5 +51,6 @@ def main():
   assert not paused;checks.append('archive size mismatch rejected before pausing')
   report=sync.history(fixture);assert report['total']>=3 and report['restore_mode']=='new_copy';checks.append('version catalog lists size/timestamp and new-copy mode')
  report={'state':'PASS','checks':checks,'work':str(work),'limitations':['real NTFS fixture IO with simulated REST catalog; official Syncthing catalog integration checked separately','production user files not restored or modified']}
+ (Path(c['root'])/'system/runtime/acceptance').mkdir(parents=True,exist_ok=True)
  (work/'result.json').write_text(json.dumps(report,indent=2)+'\n');(Path(c['root'])/'system/runtime/acceptance/sync-recovery.json').write_text(json.dumps(report,indent=2)+'\n');print('PASS:',len(checks),'safe recovery checks; originals and archived copies preserved')
 if __name__=='__main__':main()
