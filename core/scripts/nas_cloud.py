@@ -1,7 +1,9 @@
 """Private cloud account bridge. Provider authorization is separate from backup transport."""
 import sys
 sys.dont_write_bytecode = True
-import base64, contextlib, datetime, fcntl, hashlib, http.cookiejar, json, os, re, secrets, subprocess, tempfile, time, threading
+import uuid
+from nas_backup_control import Interrupted, check, run as backup_run
+import base64, contextlib, datetime, fcntl, hashlib, http.cookiejar, json, os, re, secrets, subprocess, tempfile, time, threading, stat
 import urllib.error, urllib.parse, urllib.request
 from pathlib import Path
 
@@ -40,7 +42,7 @@ def verification_alive(account):return process_alive(account.get('verification')
 def summary(c):
     rows=[]
     for account in metadata(c)['accounts']:
-        row={k:account.get(k) for k in ('id','provider','name','remote_path','state','verified_at','error')}
+        row={k:account.get(k) for k in ('id','provider','name','remote_path','state','verified_at','error','health')}
         row['auto_backup']=account.get('auto_backup',True)
         row['backup']=dict(account.get('backup') or {})
         if not row['backup']:
@@ -51,7 +53,7 @@ def summary(c):
         row['profile']={k:v for k,v in (account.get('profile') or {}).items() if k in ('name','nick_name','user_name','user_id')}
         if account['state'] in ('verifying','initializing'):
             row['state']='verifying' if verification_alive(account) else 'failed'
-            if row['state']=='failed':row['error']='连接验证已中断，请重新验证'
+            if row['state']=='failed':row['error']='后台检查已中断，稍后自动重试'
         rows.append(row)
     return rows
 
@@ -65,9 +67,10 @@ def profile(c,account):
         return {k:str(result[k])[:200] for k in ('name','nick_name','user_name','user_id') if result.get(k)}
     except (RuntimeError,KeyError,ValueError):return {}
 
-def start_verification(c,ident):
+def start_verification(c,ident,*,diagnostic=False):
     value=metadata(c);account=next((a for a in value['accounts'] if a['id']==ident),None)
     if not account:raise RuntimeError('未知网盘账号')
+    if account.get('backup',{}).get('state')=='running' and process_alive(account.get('backup_job')):raise RuntimeError('请等待当前备份结束后再验证连接')
     if account['state'] in ('verifying','initializing') and verification_alive(account):
         return {'state':'verifying','account':ident}
     job={'id':secrets.token_hex(12),'pid':os.getpid(),'process_start':Path('/proc/self/stat').read_text().split()[21]}
@@ -78,20 +81,53 @@ def start_verification(c,ident):
             from nasctl import LOCK_ROOT
             # The initiating HTTP request releases its lifecycle lock before this worker proceeds.
             with (LOCK_ROOT/'lifecycle.lock').open('a') as lifecycle:
-                fcntl.flock(lifecycle,fcntl.LOCK_EX)
-                with account_lock(c):verify(c,ident)
+                while True:
+                    check()
+                    try:fcntl.flock(lifecycle,fcntl.LOCK_EX|fcntl.LOCK_NB);break
+                    except BlockingIOError:time.sleep(.25)
+                with account_lock(c):
+                    (diagnose if diagnostic else verify)(c,ident)
         except BaseException:
-            with account_lock(c):
+            with account_lock(c,blocking=True):
                 current=metadata(c);item=next((a for a in current['accounts'] if a['id']==ident),None)
                 if item and item.get('verification',{}).get('id')==job['id'] and item['state'] in ('verifying','initializing'):
-                    item.update(state='failed',error='连接验证未完成，请重新验证')
+                    item.update(state='failed',error='后台检查未完成，稍后自动重试',next_verify_after=time.time()+300)
                     save(Path(c['host'])/'state/cloud-accounts.json',current)
     thread=threading.Thread(target=work,name='cloud-verification-'+ident,daemon=True)
     try:thread.start()
     except Exception:
-        account.update(state='failed',error='无法启动连接验证，请重试');save(Path(c['host'])/'state/cloud-accounts.json',value)
+        account.update(state='failed',error='暂时无法启动后台检查，稍后自动重试',next_verify_after=time.time()+300);save(Path(c['host'])/'state/cloud-accounts.json',value)
         raise RuntimeError(account['error']) from None
     return {'state':'verifying','account':ident}
+
+def health_problem(error):
+    return {'message':str(error) if isinstance(error,RuntimeError) else '网盘连接异常，后台将自动重试',
+            'checked_at':datetime.datetime.now(datetime.timezone.utc).isoformat()}
+
+def diagnose(c,ident):
+    """Read-only connection/identity check after failures; never initializes or repairs."""
+    value=metadata(c);account=next(a for a in value['accounts'] if a['id']==ident)
+    try:
+        remote_listing(c,account['mount'])
+        configuration=json.loads(command(c,['restic','-r','rclone:'+ident+':repository','cat','config']))
+        if not account.get('repository_id') or configuration.get('id')!=account['repository_id']:
+            raise RuntimeError('远端仓库身份不匹配，已停止自动备份，请检查网盘中的备份目录')
+        account.update(state='ready',error=None,health=None,verified_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),next_verify_after=0)
+        event(c,'diagnosis-success',ident)
+    except Exception as error:
+        account.update(state='failed',error=health_problem(error)['message'],health=health_problem(error),next_verify_after=time.time()+300)
+        event(c,'diagnosis-failed',ident,error=account['error'])
+    save(Path(c['host'])/'state/cloud-accounts.json',value)
+
+def maintain_accounts(c):
+    """Recover failed/interrupted verification without a manual verification button."""
+    with account_lock(c):
+        for account in metadata(c)['accounts']:
+            stale=account['state'] in ('verifying','initializing') and not verification_alive(account)
+            if (account['state']=='failed' or stale) and time.time()>=account.get('next_verify_after',0):
+                if account.get('backup',{}).get('state')=='running' and process_alive(account.get('backup_job')):continue
+                start_verification(c,account['id'],diagnostic=bool(account.get('repository_id')))
+                break  # Keep connection diagnostics serialized and bounded.
 
 def automatic_accounts(c):
     return [a for a in summary(c) if a['auto_backup'] and a['state']=='ready']
@@ -146,14 +182,17 @@ def request(url, data=None, token=None, opener=None):
         raise RuntimeError('网盘接口返回 HTTP '+str(error.code)+'，'+hint) from None
     except Exception:
         # Exception URLs/bodies may contain authorization codes or tokens.
-        raise RuntimeError('网盘接口请求失败，请检查直连网络或重新授权') from None
+        raise RuntimeError('网盘接口请求失败，后台将自动检查网络连接') from None
 
 def api(c, path, data=None):
     token = (Path(c['host']) / 'secrets/cloud-bridge-token').read_text().strip()
     result = request(BRIDGE + path, data, token)
     if result.get('code') != 200:
         event(c,'gateway-api-failed',endpoint=path,code=result.get('code'),diagnostic=str(result.get('message',''))[:3000])
-        raise RuntimeError('网盘连接组件拒绝操作，请检查账号授权和连接状态')
+        message=str(result.get('message','')).lower().replace('_','').replace(' ','')
+        if any(code in message for code in ('invalidrefreshtoken','refreshtokenexpired','invalidgrant')):
+            raise RuntimeError('云盘授权已失效，请点击警告图标重新授权')
+        raise RuntimeError('网盘连接组件拒绝操作，后台将自动检查连接状态')
     return result.get('data')
 
 def harden(c):
@@ -179,6 +218,9 @@ def authorize_start(c, provider, name, account=None):
     if not c.get('cloud_bridge_prepared'): raise RuntimeError('网盘连接组件尚未准备好')
     if account is not None and not any(a['id'] == account and a['provider'] == provider for a in metadata(c)['accounts']):
         raise RuntimeError('未知网盘账号，无法更新授权')
+    if account is not None:
+        item=next(a for a in metadata(c)['accounts'] if a['id']==account)
+        if item.get('backup',{}).get('state')=='running' and process_alive(item.get('backup_job')):raise RuntimeError('请等待当前备份结束后再重新授权')
     jar = http.cookiejar.CookieJar()
     query = urllib.parse.urlencode({'driver': 'alicloud', 'driver_txt': 'alicloud_qr', 'server_use': 'true', 'server_set': 'true'})
     data = request(BROKER + '/alicloud/requests?' + query, opener=broker(jar))
@@ -238,20 +280,37 @@ def attach(c, auth, refresh_token):
     value['accounts'].append(account); save(Path(c['host']) / 'state/cloud-accounts.json', value)
     return {k: account[k] for k in ('id', 'name', 'provider', 'state')}
 
-def command(c, args, source=None, input=None):
+def command(c, args, source=None, input=None, live_data=None):
+    # The gateway admission limit is one active download. Restic's default
+    # parallel reads exceed its short queue deadline and surface as HTTP 416 /
+    # misleading missing-pack errors. Queue at the client before HTTP admission.
+    if args[0]=='restic' and any(value.startswith('rclone:') for value in args):
+        args=[args[0],'-o','rclone.connections=1',*args[1:]]
     versions = read(Path(c['host']) / 'config/versions.json', {})
     image = versions['CLOUD_BACKUP_IMAGE']['image']
-    cmd = DOCKER + ['run', '--rm', '--label', 'nas.purpose=cloud-backup', '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges:true',
+    worker='nas-backup-'+uuid.uuid4().hex
+    cmd = DOCKER + ['run', '--rm', '--name',worker, '--label', 'nas.purpose=cloud-backup', '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges:true',
         '--network', c['project'] + '_default', '--tmpfs', '/tmp:size=256m', '--memory', '768m', '-e', 'HOME=/tmp',
         '-e', 'HTTP_PROXY=', '-e', 'HTTPS_PROXY=', '-e', 'ALL_PROXY=', '-e', 'http_proxy=', '-e', 'https_proxy=', '-e', 'all_proxy=', '-e', 'NO_PROXY=*',
         '--mount', f"type=bind,source={c['host']}/secrets/cloud-rclone.conf,target=/credentials/rclone.conf,readonly",
         '--mount', f"type=bind,source={c['host']}/secrets/backup-password,target=/credentials/password,readonly", '-e', 'RESTIC_PASSWORD_FILE=/credentials/password']
     if source: cmd += ['--mount', f'type=bind,source={source},target=/backup-set,readonly']
+    if live_data is not None:
+        if source is None or Path(live_data).is_symlink() or Path(live_data).resolve()!=Path(c['data']).resolve():raise RuntimeError('Invalid live backup mount')
+        cmd += ['--mount',f'type=bind,source={live_data},target=/backup-set/data,readonly']
     if input is not None: cmd += ['-i']
     cmd += ['--entrypoint', args[0], image, *args[1:]]
-    result = subprocess.run(cmd, input=input, text=True, capture_output=True, timeout=7200 if source else 180)
+    # Repository checks can outlast interactive requests as backup history grows.
+    long_running = source is not None or (args[0] == 'restic' and 'check' in args[1:])
+    try:
+        result = backup_run(cmd, input=input, text=True, capture_output=True, timeout=7200 if long_running else 180)
+    except BaseException:
+        try:subprocess.run(DOCKER+['stop','--time','10',worker],capture_output=True,timeout=20)
+        except subprocess.SubprocessError:pass
+        raise
     if result.returncode:
-        event(c,'command-failed',command=args[:2],exit_code=result.returncode,diagnostic=result.stderr[-6000:])
+        event(c,'command-failed',command=[args[0],next((x for x in args[1:] if x in ('backup','check','snapshots','cat','dump','unlock','init','ls','lsjson','rcat','deletefile')),'operation')],exit_code=result.returncode,diagnostic=result.stderr[-6000:])
+        if result.returncode==11:raise RuntimeError('备份仓库仍被锁定；请稍后重试，过期锁需确认无写入任务后清理')
         raise RuntimeError('网盘操作失败，诊断信息已记录；请检查授权、网络或远端完整性')
     return result.stdout
 
@@ -317,12 +376,12 @@ def verify(c, ident):
         if account.get('repository_id') and account['repository_id'] != configuration['id']:
             raise RuntimeError('远端仓库身份已改变，拒绝接管其他备份')
         account['repository_id'] = configuration['id']
-        account.update(state='ready', verified_at=datetime.datetime.now(datetime.timezone.utc).isoformat(), error=None)
+        account.update(state='ready', verified_at=datetime.datetime.now(datetime.timezone.utc).isoformat(), error=None,health=None,next_verify_after=0)
         save(statepath, value)
         event(c,'verification-success',ident)
         return {'state': 'ready', 'account': ident}
     except Exception as error:
-        account.update(state='failed', error=str(error) if isinstance(error, RuntimeError) else '连接验证失败，请重试')
+        account.update(state='failed', error=health_problem(error)['message'],health=health_problem(error),next_verify_after=time.time()+300)
         save(statepath, value)
         event(c,'verification-failed',ident,error=account['error'])
         raise RuntimeError(account['error']) from None
@@ -336,61 +395,150 @@ def targets(c,identifiers=None,automatic=False):
     if not accounts or any(a['state']!='ready' for a in accounts):raise RuntimeError('请先完成所选网盘账号授权与连接验证')
     return accounts
 
-def backup(c,source,identifiers=None,automatic=False):
+def complete_marker(source,diagnostics=None):
+    # Opening by directory FD verifies the live filesystem rather than a stale
+    # DrvFS stat/negative lookup cache after a staging directory was renamed.
+    try:
+        with contextlib.ExitStack() as stack:
+            directory=os.open(source,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW);stack.callback(os.close,directory)
+            marker=os.open('COMPLETE',os.O_RDONLY|os.O_NOFOLLOW,dir_fd=directory);stack.callback(os.close,marker)
+            return stat.S_ISREG(os.fstat(marker).st_mode)
+    except OSError as error:
+        if diagnostics is not None:diagnostics.update(errno=error.errno,reason=error.strerror)
+        return False
+
+
+def backup(c,source,identifiers=None,automatic=False,*,online=False):
     source=Path(source)
-    if source.is_symlink() or source.parent.resolve()!=Path(c['backup_root']).resolve() or not (source/'COMPLETE').is_file():raise RuntimeError('仅允许上传已完成的一致性快照')
+    if online:
+        from nas_online import validate
+        validate(c,source)
+    else:
+        linked=source.is_symlink();parent_ok=source.parent.resolve() in (Path(c['backup_root']).resolve(),(Path(c['backup_root'])/'cloud').resolve())
+        marker_error={}
+        complete=complete_marker(source,marker_error) if parent_ok and not linked else False
+        if linked or not parent_ok or not complete:
+            event(c,'source-rejected',source=source.name,linked=linked,parent_matches=parent_ok,complete=complete,marker_error=marker_error)
+            raise RuntimeError('仅允许上传已完成的一致性快照')
+        if source.parent.resolve()==(Path(c['backup_root'])/'cloud').resolve():
+            from nas_continuous import validate
+            receipt=read(Path(c['host'])/'state/cloud-full-check.json',{})
+            full=time.time()-receipt.get('time',0)>=86400
+            validate(c,source,full=full)
+            if full:save(Path(c['host'])/'state/cloud-full-check.json',{'time':time.time(),'source':source.name})
     accounts=targets(c,identifiers,automatic);results=[];failures=[]
     for account in accounts:
+        check()
         ident=account['id'];previous=next(a['backup'] for a in summary(c) if a['id']==account['id']);now=datetime.datetime.now(datetime.timezone.utc).isoformat()
-        record={'state':'running','started':now,'source':source.name,'last_success':previous.get('last_success')}
+        record={'state':'running','phase':'uploading','started':now,'source':source.name,'last_success':previous.get('last_success'),'consistency':'eventual' if online else 'application_consistent',**{k:previous[k] for k in ('last_error','last_error_at') if previous.get(k)}}
         job={'pid':os.getpid(),'process_start':Path('/proc/self/stat').read_text().split()[21]}
-        update_account(c,ident,backup=record,backup_job=job);event(c,'backup-start',ident,source=source.name)
+        from nas_backup_history import cloud_record
+        history_id=cloud_record(c,account,record)
+        update_account(c,ident,backup=record,backup_job=job);event(c,'backup-start',ident,source=source.name,history_id=history_id)
         try:
             repo='rclone:'+ident+':repository'
-            output=command(c,['restic','-r',repo,'backup','--json','--host','garden-zero','--tag','nas','/backup-set'],source=source)
+            if online:
+                from nas_backup_control import ACTIVE
+                if ACTIVE.get():ACTIVE.get().update(phase='uploading')
+            options=['--tag','online'] if online else ['--ignore-ctime']
+            output=command(c,['restic','-r',repo,'backup','--json',*options,'--host','garden-zero','--tag','nas','/backup-set'],source=source,**({'live_data':c['data']} if online else {}))
             completed=next((json.loads(line) for line in reversed(output.splitlines()) if line.startswith('{') and json.loads(line).get('message_type')=='summary'),{})
             if not completed.get('snapshot_id'):raise RuntimeError('远端未确认完整快照，不能记录成功')
+            if online:
+                from nasctl import volume
+                volume(c)  # Reject a missing/replaced live source volume, not ordinary online changes.
+            record['phase']='checking';update_account(c,ident,backup=record)
+            if online and ACTIVE.get():ACTIVE.get().update(phase='checking')
             command(c,['restic','-r',repo,'check'])
             now=datetime.datetime.now(datetime.timezone.utc).isoformat()
-            record.update(state='success',finished=now,last_success=now,snapshot_id=completed['snapshot_id'])
+            record.update(state='success',phase='complete',finished=now,last_success=now,last_error=None,last_error_at=None,snapshot_id=completed['snapshot_id'],uploaded_bytes=completed.get('data_added'),processed_bytes=completed.get('total_bytes_processed'))
             results.append({'account':ident,'snapshot_id':completed['snapshot_id']});event(c,'backup-success',ident,snapshot_id=completed['snapshot_id'])
+        except Interrupted:
+            raise
         except Exception as error:
-            record.update(state='failed',finished=datetime.datetime.now(datetime.timezone.utc).isoformat(),error=str(error));failures.append(ident)
+            failed_at=datetime.datetime.now(datetime.timezone.utc).isoformat()
+            record.update(state='failed',finished=failed_at,error=str(error),last_error=str(error),last_error_at=failed_at);failures.append(ident)
             event(c,'backup-failed',ident,error=str(error))
         update_account(c,ident,backup=record)
+        cloud_record(c,account,record,history_id=history_id)
     if failures:raise RuntimeError('部分网盘备份失败，请查看对应账号的结果')
-    return {'mode':'encrypted_versioned_repository','accounts':results,'source':source.name}
+    if not online and source.parent.resolve()==(Path(c['backup_root'])/'cloud').resolve():
+        from nas_continuous import confirmed
+        try:confirmed(c,source)
+        except Exception:event(c,'local-cache-retention-failed',source=source.name)
+    return {'mode':'online_versioned_repository' if online else 'encrypted_versioned_repository','accounts':results,'source':source.name,'consistency':'eventual' if online else 'application_consistent'}
 
-def start_backup(c,ident=None):
-    accounts=targets(c,[ident] if ident is not None else None)
+def wait_for_committed_marker(source,attempts=91):
+    """Allow bounded DrvFS rename visibility delay, without accepting missing data."""
+    for attempt in range(attempts):
+        check()
+        error={}
+        if complete_marker(source,error):return
+        if error.get('errno')!=2 or attempt==attempts-1:
+            raise RuntimeError('已生成恢复点的完成标记暂不可读；保留恢复点，稍后可重试')
+        time.sleep(1)
+
+def start_backup(c,ident=None,*,automatic=False,reuse=False):
+    accounts=targets(c,[ident] if ident is not None else None,automatic=automatic)
     if any(a.get('backup',{}).get('state')=='running' and process_alive(a.get('backup_job')) for a in metadata(c)['accounts']):raise RuntimeError('已有网盘备份正在进行')
+    from nas_backup_control import begin,operation
+    control_row=begin(c,'cloud')
     now=datetime.datetime.now(datetime.timezone.utc).isoformat();job={'pid':os.getpid(),'process_start':Path('/proc/self/stat').read_text().split()[21]};ids=[a['id'] for a in accounts]
     value=metadata(c);known={a['id']:a['backup'] for a in summary(c)}
     for a in value['accounts']:
-        if a['id'] in ids:a.update(backup={**known[a['id']],'state':'running','started':now,'error':None},backup_job=job)
+        if a['id'] in ids:a.update(backup={**known[a['id']],'state':'running','phase':None,'started':now,'error':None,'finished':None,'source':None,'snapshot_id':None,'uploaded_bytes':None,'processed_bytes':None,'consistency':'eventual'},backup_job=job)
     save(Path(c['host'])/'state/cloud-accounts.json',value)
-    def work():
+    def perform():
+        from nas_backup_history import cloud_record
+        for account in accounts:cloud_record(c,account,{'consistency':'eventual'})
         statepath=Path(c['host'])/'state/cloud-backup.json';previous=read(statepath,{})
         record={'state':'running','started':now,'last_success':previous.get('last_success')};save(statepath,record)
         try:
-            from nasctl import LOCK_ROOT,backup as snapshot
-            from nas_mirror import Snapshot
-            with (LOCK_ROOT/'lifecycle.lock').open('a') as lifecycle:
-                fcntl.flock(lifecycle,fcntl.LOCK_EX)
-                result=snapshot(c)
-                if result['state']!='success':raise RuntimeError('未生成新的一致性快照，网盘备份未执行')
-                with Snapshot(Path(result['path'])):result=backup(c,Path(result['path']),ids)
-                record.update(result,state='success',last_success=datetime.datetime.now(datetime.timezone.utc).isoformat())
+            from nasctl import lock
+            from nas_online import bundle
+            # Shared lifecycle access: app operations may run; disk backup/shutdown remain exclusive.
+            while True:
+                check()
+                try:
+                    lifecycle=lock(shared=True);lifecycle.__enter__();break
+                except RuntimeError as error:
+                    if '互斥维护' not in str(error):raise
+                    time.sleep(.25)
+            try:
+                with bundle(c) as source:
+                    result=backup(c,source,ids,online=True)
+            finally:lifecycle.__exit__(None,None,None)
+            record.update(result,state='success',last_success=datetime.datetime.now(datetime.timezone.utc).isoformat())
         except BaseException as error:
-            message=str(error) if isinstance(error,RuntimeError) else '网盘备份未完成，请查看日志'
-            record.update(state='failed',error=message)
+            message=str(error) if isinstance(error,(RuntimeError,Interrupted)) else '网盘备份未完成，请查看日志'
+            record.update(state='interrupted' if isinstance(error,Interrupted) else 'failed',error=message)
             for ident in ids:
                 account=next(a for a in metadata(c)['accounts'] if a['id']==ident)
-                if account.get('backup',{}).get('state')=='running':update_account(c,ident,backup={**account['backup'],'state':'failed','error':message})
+                if account.get('backup',{}).get('state')=='running':update_account(c,ident,backup={**account['backup'],'state':record['state'],'error':message,'finished':datetime.datetime.now(datetime.timezone.utc).isoformat()})
             event(c,'backup-job-failed',error=message)
+        for account in accounts:
+            latest=next(a for a in metadata(c)['accounts'] if a['id']==account['id'])
+            cloud_record(c,account,latest.get('backup',{}))
         record['time']=datetime.datetime.now(datetime.timezone.utc).isoformat();save(statepath,record)
+        # Run only after releasing the upload lifecycle lock and finishing all targets.
+        for ident in ids:
+            item=next(a for a in metadata(c)['accounts'] if a['id']==ident)
+            if item.get('backup',{}).get('state')=='failed':
+                try:
+                    with account_lock(c):start_verification(c,ident,diagnostic=True)
+                except Exception:event(c,'diagnosis-deferred',ident)
+
+        if record['state']=='interrupted':raise Interrupted(record['error'])
+        if record['state']=='failed':raise RuntimeError(record['error'])
+    def work():
+        try:
+            with operation(c,'cloud',control_row):perform()
+        except Exception:pass
     try:threading.Thread(target=work,name='cloud-backup-job',daemon=True).start()
     except Exception:
+        try:
+            with operation(c,'cloud',control_row):raise RuntimeError('无法启动备份任务')
+        except RuntimeError:pass
         for a in value['accounts']:
             if a['id'] in ids:a['backup'].update(state='failed',error='无法启动备份任务，请重试')
         save(Path(c['host'])/'state/cloud-accounts.json',value)
@@ -422,6 +570,36 @@ def remove_account(c,ident,confirmed):
     return {'state':'removed'}
 
 def action(c, data):
+    if data.get('action')=='cloud-delete':
+        if data.get('confirmed') is not True:raise RuntimeError('删除账号需要二次确认')
+        with account_lock(c):
+            value=metadata(c);item=next((a for a in value['accounts'] if a['id']==data.get('account')),None)
+            if item is None:raise RuntimeError('未知网盘账号')
+            # Keep new automatic jobs from racing a confirmed deletion request.
+            item['auto_backup']=False;save(Path(c['host'])/'state/cloud-accounts.json',value)
+            record=item.get('backup') or {}
+        from nas_backup_control import status,cancel
+        job=status(c)['operation']
+        participating=record.get('state')=='running' or bool(record.get('started') and job.get('started') and record['started']>=job['started'])
+        if participating and job.get('kind')=='cloud' and job.get('state') in ('running','cancelling'):
+            if job['state']=='running':cancel(c,job['id'])
+            return {'state':'waiting_for_backup'}
+        from nasctl import lock
+        with lock(shared=True):
+            with account_lock(c):return remove_account(c,data.get('account'),True)
+    # Do not wait for the backup while holding the account lock: its safe exit
+    # needs that lock too. The browser retries authorization after cancellation.
+    if data.get('action')=='cloud-authorize' and data.get('account') is not None:
+        with account_lock(c):
+            item=next((a for a in metadata(c)['accounts'] if a['id']==data['account']),None)
+            if item is None or data.get('provider')!=item['provider']:raise RuntimeError('未知网盘账号')
+            if not isinstance(data.get('name'),str) or not 1<=len(data['name'].strip())<=40:raise RuntimeError('请输入 1–40 字的账号名称')
+            active=item.get('backup',{}).get('state')=='running' and process_alive(item.get('backup_job'))
+        if active:
+            from nas_backup_control import status,cancel
+            job=status(c)['operation']
+            if job.get('kind')=='cloud' and job.get('state') in ('running','cancelling'):
+                cancel(c,job['id']);return {'state':'waiting_for_backup'}
     with account_lock(c):
         operation = data['action']
         if operation == 'cloud-authorize': return authorize_start(c, data.get('provider'), data.get('name'), data.get('account'))

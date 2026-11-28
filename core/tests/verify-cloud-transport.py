@@ -5,6 +5,7 @@ sys.dont_write_bytecode = True
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 import argparse, json, os, secrets, shutil, tempfile
+import nas_continuous as continuous
 from nasctl import cfg, lock
 import nas_cloud as cloud
 
@@ -17,7 +18,17 @@ def main():
     shutil.copyfile(host / 'secrets/cloud-bridge-token', work / 'secrets/cloud-bridge-token')
     shutil.copyfile(host / 'config/versions.json', work / 'config/versions.json')
     (work / 'secrets/backup-password').write_text(secrets.token_urlsafe(32))
-    fixture = {**c, 'host': str(work), 'backup_root': str(work / 'backups')}
+    fixture = {**c, 'host': str(work), 'backup_root': str(work / 'backups'), 'data': str(work/'data')}
+    (work/'data').mkdir()
+    def capture(stamp):
+        root=continuous.roots(fixture);stage=root/('.incomplete-'+stamp);stage.mkdir()
+        builder=continuous.Builder(fixture,stage);builder.prepare(final=True)
+        for name in ('database.dump','configuration.tar'):(stage/name).write_text('isolated fake recovery payload')
+        m={'schema':4,'time':stamp,'databases':{'fixture':{'dump':'database.dump'}},'content':builder.entries,'files':{n:continuous.digest_file(stage/n) for n in ('database.dump','configuration.tar')}}
+        (stage/'manifest.json').write_text(json.dumps(m));(stage/'COMPLETE').write_text(stamp+'\n')
+        dest=root/stamp;stage.rename(dest)
+        cloud.save(work/'state/cloud-snapshot.json',{'state':'success','path':str(dest),'last_success':stamp})
+        continuous.validate(fixture,dest);return dest
     local = host / 'state/cloud-gateway' / ('acceptance-' + stamp); local.mkdir(); os.chown(local, 1001, 1001)
     mount = '/acceptance-' + stamp; ident = 'fixture-' + stamp
     storage = None; checks = []; complete = False
@@ -32,24 +43,27 @@ def main():
         else: raise RuntimeError('Unknown target was adopted')
         assert unknown.read_text() == 'preserve fixture'; checks.append('unknown nonempty destination refused without modifying files'); unknown.unlink()
         cloud.verify(fixture, ident); checks.append('real WebDAV upload/download SHA-256 roundtrip and restic init/check')
-        first = work / 'backups/20261124-000001'; first.mkdir(); (first / 'COMPLETE').write_text('fixture')
-        (first / 'removed.txt').write_text('old-version-' + stamp); (first / 'kept.txt').write_text('keep-' + stamp)
+        (work/'data/removed.txt').write_text('old-version-' + stamp);(work/'data/kept.txt').write_text('keep-' + stamp)
+        first=capture('20261124-000001')
         initial = cloud.backup(fixture, first)['accounts'][0]['snapshot_id']; checks.append('first encrypted snapshot committed and checked')
         repo = 'rclone:' + ident + ':repository'
         try: cloud.command(fixture, ['restic', '-r', repo, 'backup', '--files-from', '/missing-fixture-file'], source=first)
         except RuntimeError: pass
         else: raise RuntimeError('Intentional incomplete backup unexpectedly passed')
-        assert cloud.command(fixture, ['restic', '-r', repo, 'dump', initial, '/backup-set/removed.txt']) == 'old-version-' + stamp
+        assert cloud.command(fixture, ['restic', '-r', repo, 'dump', initial, '/backup-set/data/removed.txt']) == 'old-version-' + stamp
         checks.append('failed backup retains a readable previous complete snapshot')
-        second = work / 'backups/20261124-000002'; second.mkdir(); (second / 'COMPLETE').write_text('fixture')
-        (second / 'kept.txt').write_text('keep-' + stamp); (second / 'new.txt').write_text('new-version-' + stamp)
+        (work/'data/removed.txt').unlink();(work/'data/new.txt').write_text('new-version-'+stamp)
+        second=capture('20261124-000002')
         latest = cloud.backup(fixture, second)['accounts'][0]['snapshot_id']
         listing = cloud.command(fixture, ['restic', '-r', repo, 'ls', '--json', latest])
         paths = [json.loads(line).get('path') for line in listing.splitlines() if line.startswith('{')]
-        assert '/backup-set/removed.txt' not in paths and '/backup-set/new.txt' in paths
-        assert cloud.command(fixture, ['restic', '-r', repo, 'dump', initial, '/backup-set/removed.txt']) == 'old-version-' + stamp
-        assert cloud.command(fixture, ['restic', '-r', repo, 'dump', latest, '/backup-set/new.txt']) == 'new-version-' + stamp
-        checks.append('incremental latest view removes deleted file; old snapshot still restores it')
+        assert '/backup-set/data/removed.txt' not in paths and '/backup-set/data/new.txt' in paths
+        assert cloud.command(fixture, ['restic', '-r', repo, 'dump', initial, '/backup-set/data/removed.txt']) == 'old-version-' + stamp
+        assert cloud.command(fixture, ['restic', '-r', repo, 'dump', latest, '/backup-set/data/new.txt']) == 'new-version-' + stamp
+        checks.append('directory recovery points: latest view removes deleted file; old snapshot still restores it')
+        assert not (second/'user-content.tar').exists()
+        assert cloud.command(fixture,['restic','-r',repo,'dump',latest,'/backup-set/database.dump'])=='isolated fake recovery payload'
+        checks.append('directory layout restores database export beside data without full user-content tar')
         try: cloud.command(fixture, ['sh', '-c', 'touch /backup-set/should-not-write'], source=second)
         except RuntimeError: pass
         else: raise RuntimeError('Read-only fixture mount accepted a write')

@@ -3,12 +3,12 @@ import sys as _nas_sys
 _nas_sys.dont_write_bytecode=True
 import datetime,json,re,subprocess,time,threading
 APPS={
- 'immich':{'data_paths':['immich'],'database':'immich','database_user':'immich','name':'Immich 相册','icon':'photo','modules':['immich','ml'],'primary':['immich'],'description':'备份照片与视频，管理原件、缩略图与转码；可选智能检索和人脸识别。','purpose':'管理照片原件、上传、缩略图和转码；智能检索与人脸识别是相册的可选功能。','lifecycle':'关闭相册会同时停止它的所有功能。重新开启时恢复保存的功能设置。','features':[{'id':'intelligence','name':'智能检索与人脸识别','description':'按内容搜索照片，识别人脸；仅在相册运行时生效。','module':'ml','requires_parent':True}]},
+ 'immich':{'backup_primary_database':True,'backup_ignore_changes':['immich/'+folder+'/.immich' for folder in ('backups','encoded-video','library','profile','thumbs','upload')],'log_order':['immich-server','immich-machine-learning','database','cache'],'backup_writer_services':['immich-server'],'data_paths':['immich'],'database':'immich','database_user':'immich','name':'Immich 相册','icon':'photo','modules':['immich','ml'],'primary':['immich'],'description':'备份照片与视频，管理原件、缩略图与转码；可选智能检索和人脸识别。','purpose':'管理照片原件、上传、缩略图和转码；智能检索与人脸识别是相册的可选功能。','lifecycle':'关闭相册会同时停止它的所有功能。重新开启时恢复保存的功能设置。','features':[{'id':'intelligence','name':'智能检索与人脸识别','description':'按内容搜索照片，识别人脸；仅在相册运行时生效。','module':'ml','requires_parent':True}]},
  'files':{'data_paths':['.'],'data_read_only':True,'name':'网络共享','icon':'folder','modules':['smb'],'primary':['smb'],'description':'通过 SMB 只读挂载 NAS 文件；网页浏览请使用左侧文件页面。','purpose':'供 Finder 和资源管理器直接访问 NAS 文件。','lifecycle':'仅控制 SMB 网络共享，网页文件页面始终由管理平台提供。'},
- 'shared':{'data_paths':['shared'],'name':'共享同步盘','icon':'sync','modules':['syncthing'],'primary':['syncthing'],'description':'同步设备与 NAS 的共享文件；离线可读写，保留冲突副本和历史版本。','purpose':'在设备与 NAS 的共享空间之间同步文件。冲突保留双方副本，NAS 保留历史版本。','lifecycle':'应用开关控制整个同步服务；暂停共享只暂停文件同步，绑定关系和本地文件保留。'},
- 'joplin':{'data_paths':['joplin'],'database':'joplin','database_user':'joplin','name':'Joplin 笔记','icon':'book','modules':['knowledge'],'primary':['knowledge'],'description':'用手机和电脑离线写笔记、日记与长文，联网后同步标签、图片和附件。','purpose':'Joplin 客户端负责写作；此服务提供私人同步与账户管理。','lifecycle':'关闭后客户端仍可离线编辑；恢复服务后打开客户端同步。手机后台或锁屏时同步可能中断。'},
- 'git':{'data_paths':['git'],'name':'Git 仓库','icon':'git','modules':['git'],'primary':['git'],'description':'通过授权 SSH 公钥推送、拉取 Git 仓库，保存项目版本。','purpose':'使用授权 SSH 公钥推送、拉取 Git 裸仓库；不提供交互式 shell。','lifecycle':'关闭后暂停推送和拉取，保留仓库。'},
- 'platform':{'database':'platform_auth','database_user':'platform_auth','name':'零号庭院基础服务','icon':'server','modules':['meta','tailscale','postgres','identity','cloud'],'primary':['meta','tailscale','postgres','identity'],'description':'提供管理、私人远程访问与共享 PostgreSQL；各应用使用独立账户和数据库。','purpose':'提供管理、认证和安全的私人访问入口；管理容器只读挂载 data。','lifecycle':'由主机维护，避免关闭管理或远程连接导致失联。','protected':True}
+ 'shared':{'backup_state_paths':['state/syncthing/'+name for name in ('config.xml','cert.pem','key.pem','https-cert.pem','https-key.pem')],'data_paths':['shared'],'name':'共享同步盘','icon':'sync','modules':['syncthing'],'primary':['syncthing'],'description':'同步设备与 NAS 的共享文件；离线可读写，保留冲突副本和历史版本。','purpose':'在设备与 NAS 的共享空间之间同步文件。冲突保留双方副本，NAS 保留历史版本。','lifecycle':'应用开关控制整个同步服务；暂停共享只暂停文件同步，绑定关系和本地文件保留。'},
+ 'joplin':{'backup_state_paths':['state/joplin-account.json'],'data_paths':['joplin'],'database':'joplin','database_user':'joplin','name':'Joplin 笔记','icon':'book','modules':['knowledge'],'primary':['knowledge'],'description':'用手机和电脑离线写笔记、日记与长文，联网后同步标签、图片和附件。','purpose':'Joplin 客户端负责写作；此服务提供私人同步与账户管理。','lifecycle':'关闭后客户端仍可离线编辑；恢复服务后打开客户端同步。手机后台或锁屏时同步可能中断。'},
+ 'git':{'backup_state_paths':['state/git'],'data_paths':['git'],'name':'Git 仓库','icon':'git','modules':['git'],'primary':['git'],'description':'通过授权 SSH 公钥推送、拉取 Git 仓库，保存项目版本。','purpose':'使用授权 SSH 公钥推送、拉取 Git 裸仓库；不提供交互式 shell。','lifecycle':'关闭后暂停推送和拉取，保留仓库。'},
+ 'platform':{'backup_state_paths':['state/authentik','state/tailscale','state/cloud-gateway/config.json']+[('state/'+name) for name in ('desired-modules.json','autostart.json','disabled.json','schedules.json','remote.json','shared-postgres.json','sso-accounts.json','identity-certificate.json','cloud-accounts.json','cloud-removed-accounts.json','backup-settings.json')],'backup_sqlite_paths':['state/cloud-gateway/data.db'],'database_activation_config':'authentik.env','backup_writer_modules':['identity'],'database':'platform_auth','database_user':'platform_auth','name':'零号庭院基础服务','icon':'server','modules':['meta','tailscale','postgres','identity','cloud'],'primary':['meta','tailscale','postgres','identity'],'description':'提供管理、私人远程访问与共享 PostgreSQL；各应用使用独立账户和数据库。','purpose':'提供管理、认证和安全的私人访问入口；管理容器只读挂载 data。','lifecycle':'由主机维护，避免关闭管理或远程连接导致失联。','protected':True}
 }
 APP_ALIASES={'knowledge':'joplin','syncthing':'shared'}
 def canonical_app(key):
@@ -24,7 +24,7 @@ def snapshot(c,modules,desired):
   state='ready' if all(v['state']=='ready' for v in primary) else 'stopped' if all(v['state']=='stopped' for v in primary) else 'partial' if any(v['state']=='ready' for v in primary) else 'starting' if active else 'unavailable'
   entry={k:v for k,v in app.items() if k not in ('modules','primary','features')};entry.update(id=key,state=state,running=active,services=sum((MODULES[m] for m in app['modules']),[]),features=[],log_sources=[{'id':service,'name':{'immich-server':'相册服务','immich-machine-learning':'智能检索','database':'共享 PostgreSQL','cache':'缓存','files':'网页浏览','smb':'网络挂载','syncthing':'同步服务','joplin':'Joplin 同步服务','git':'Git 服务','meta':'零号庭院管理','tailscale':'远程连接','authentik-server':'统一登录','authentik-worker':'身份后台任务','identity-gateway':'身份内部 HTTPS','cloud-gateway':'网盘连接'}.get(service,service)} for module in app['modules'] for service in MODULES[module]])
   entry['storage']={'data':bool(app.get('data_paths')) and not app.get('data_read_only',False),'database':bool(app.get('database'))}
-  if key=='immich':entry['log_sources'].sort(key=lambda s:['immich-server','immich-machine-learning','database','cache'].index(s['id']))
+  if app.get('log_order'):entry['log_sources'].sort(key=lambda s:app['log_order'].index(s['id']) if s['id'] in app['log_order'] else len(app['log_order']))
   for feature in app.get('features',[]):
    m=feature['module'];v=modules.get(m,{'state':'unavailable'});needs_parent=feature.get('requires_parent',False)
    entry['features'].append({k:value for k,value in feature.items() if k not in ('module','requires_parent')}|{'enabled':desired.get('ml_preference',True) if m=='ml' else module_running(v),'active':module_running(v),'effective':v['state']=='ready' and module_running(v) and (not needs_parent or state=='ready'),'available':not needs_parent or state=='ready','state':v['state'],'hint':'先开启相册；保留上次设置' if needs_parent and state!='ready' else '功能已就绪' if v['state']=='ready' else '已关闭' if v['state']=='stopped' else '就绪待确认'})
@@ -96,3 +96,16 @@ def log_text(c,key,container=False):
   services=sum((MODULES[m] for m in APPS[key]['modules']),[])
  # No environment, inspect credentials or arbitrary commands in this endpoint.
  return clean_log(output(DOCKER+['compose','--project-name',c['project'],'--env-file',c['host']+'/config/compose.env','-f',c['host']+'/config/nas.yml','logs','--no-color','--tail','100']+services))[-64000:]
+
+
+def backup_services(modules):
+ """Derive write participants from registration, never from application IDs."""
+ result=[]
+ for app in APPS.values():
+  writes=(bool(app.get('data_paths')) and not app.get('data_read_only',False)) or bool(app.get('database'))
+  if not writes:continue
+  services=app.get('backup_writer_services')
+  if services is None:services=[service for module in app.get('backup_writer_modules',app['modules']) for service in modules[module]]
+  for service in services:
+   if service not in result:result.append(service)
+ return result

@@ -5,7 +5,7 @@ _nas_sys.dont_write_bytecode=True
 import argparse,datetime,hashlib,json,os,subprocess,sys,tempfile
 from pathlib import Path
 from nasctl import cfg
-TOOLS=['nas_backup_history.py','nas_cloud.py','nas_sso.py','nas_joplin.py','nas_database.py','nasctl.py','nas_ready.py','nas_resources.py','nas_apps.py','nas_access.py','nas_policy.py','soak-check.py','external-backup.py','nas_mirror.py','nas_identity.py','nas_writer.py','nas_sync.py','file-writer-entrypoint.py']
+TOOLS=['nas_online.py','nas_backup_config.py','nas_backup_control.py','nas_continuous.py','nas_recovery.py','nas_backup_history.py','nas_cloud.py','nas_sso.py','nas_joplin.py','nas_database.py','nasctl.py','nas_ready.py','nas_resources.py','nas_apps.py','nas_access.py','nas_policy.py','soak-check.py','external-backup.py','nas_mirror.py','nas_identity.py','nas_writer.py','nas_sync.py','file-writer-entrypoint.py']
 UNITS=['nas-agent.service','nas-session.service','nas-soak.service','nas-soak.timer']
 
 def bundle(c):

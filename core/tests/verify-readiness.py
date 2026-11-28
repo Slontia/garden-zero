@@ -80,20 +80,20 @@ class Tests(unittest.TestCase):
   with self.assertRaisesRegex(RuntimeError,'storage'):self.probe()
 class StartupWiring(unittest.TestCase):
  def test_probe_precedes_success_audit(self):
-  import nasctl,nas_access,nas_ready
+  import nasctl,nas_access,nas_ready,nas_recovery
   from unittest.mock import patch
   events=[]
   with tempfile.TemporaryDirectory() as work:
    c={'host':work,'project':'fixture','ml_enabled':False}
-   with patch.object(nasctl,'remember'),patch.object(nasctl,'run'),patch.object(nasctl,'output',return_value='{}'),patch.object(nas_access,'validate_compose'),patch.object(nasctl,'compose',side_effect=lambda *a:events.append('compose')),patch.object(nasctl,'wait_services',side_effect=lambda *a:events.append('containers')),patch.object(nas_ready,'wait_meta_ready',side_effect=lambda *a:events.append('management')),patch.object(nasctl,'audit',side_effect=lambda *a:events.append('success')):
+   with patch.object(nas_recovery,'manual_started',side_effect=lambda *a:events.append('recovery')),patch.object(nasctl,'remember'),patch.object(nasctl,'run'),patch.object(nasctl,'output',return_value='{}'),patch.object(nas_access,'validate_compose'),patch.object(nasctl,'compose',side_effect=lambda *a:events.append('compose')),patch.object(nasctl,'wait_services',side_effect=lambda *a:events.append('containers')),patch.object(nas_ready,'wait_meta_ready',side_effect=lambda *a:events.append('management')),patch.object(nasctl,'audit',side_effect=lambda *a:events.append('success')):
     nasctl.start(c,'meta')
-  self.assertLess(events.index('containers'),events.index('management'));self.assertLess(events.index('management'),events.index('success'))
+  self.assertLess(events.index('containers'),events.index('management'));self.assertLess(events.index('management'),events.index('recovery'));self.assertLess(events.index('recovery'),events.index('success'))
  def test_probe_failure_prevents_success_audit(self):
-  import nasctl,nas_access,nas_ready
+  import nasctl,nas_access,nas_ready,nas_recovery
   from unittest.mock import patch
   with tempfile.TemporaryDirectory() as work:
    c={'host':work,'project':'fixture','ml_enabled':False}
-   with patch.object(nasctl,'remember'),patch.object(nasctl,'run'),patch.object(nasctl,'output',return_value='{}'),patch.object(nas_access,'validate_compose'),patch.object(nasctl,'compose'),patch.object(nasctl,'wait_services'),patch.object(nas_ready,'wait_meta_ready',side_effect=RuntimeError('not ready')),patch.object(nasctl,'audit') as audit:
+   with patch.object(nas_recovery,'manual_started',side_effect=lambda *a:events.append('recovery')),patch.object(nasctl,'remember'),patch.object(nasctl,'run'),patch.object(nasctl,'output',return_value='{}'),patch.object(nas_access,'validate_compose'),patch.object(nasctl,'compose'),patch.object(nasctl,'wait_services'),patch.object(nas_ready,'wait_meta_ready',side_effect=RuntimeError('not ready')),patch.object(nasctl,'audit') as audit:
     with self.assertRaisesRegex(RuntimeError,'not ready'):nasctl.start(c,'meta')
     audit.assert_not_called()
 

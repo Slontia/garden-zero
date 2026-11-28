@@ -1,6 +1,7 @@
 """Authenticated incremental mirror of immutable backup sets; no live database copies."""
 import sys
 sys.dont_write_bytecode=True
+from nas_backup_control import check
 import contextlib,hashlib,hmac,json,os,re,shutil,stat,tarfile,time,uuid
 from pathlib import Path,PurePosixPath
 META='.garden-zero-backup'
@@ -10,7 +11,7 @@ def digest_file(path):
  h=hashlib.sha256()
  fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW)
  with os.fdopen(fd,'rb') as stream:
-  for block in iter(lambda:stream.read(1024*1024),b''):h.update(block)
+  for block in iter(lambda:stream.read(1024*1024),b''):check();h.update(block)
  return h.hexdigest()
 def unsafe(path):return path.is_symlink() or path.is_junction()
 def relative(name):
@@ -28,7 +29,7 @@ def durable_tree(root):
   path=Path(directory)
   if unsafe(path):raise RuntimeError('Linked directory during durable commit')
   directories.append(path)
- for path in reversed(directories):sync_directory(path)
+ for path in reversed(directories):check();sync_directory(path)
 
 def atomic(path,value):
  temp=path.with_name(path.name+'.tmp')

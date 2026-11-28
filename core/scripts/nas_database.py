@@ -5,7 +5,13 @@ import json,os,re,secrets,subprocess
 from pathlib import Path
 
 def application_databases(c):
- return ('immich','joplin','platform_auth') if c.get('sso',{}).get('prepared') or (Path(c['host'])/'config/authentik.env').exists() else ('immich','joplin')
+ from nas_apps import APPS
+ return tuple(dict.fromkeys(app['database'] for app in APPS.values() if app.get('database') and
+  (not app.get('database_activation_config') or (Path(c['host'])/'config'/app['database_activation_config']).exists() or c.get('sso',{}).get('prepared'))))
+
+def primary_database():
+ from nas_apps import APPS
+ return next(app['database'] for app in APPS.values() if app.get('backup_primary_database'))
 
 def credentials(c,migrate=False):
  host=Path(c['host']);secret=host/'secrets'

@@ -61,9 +61,12 @@ def cloud(c,operation,identifiers=None,automatic=False):
   from nas_cloud import metadata,backup
   if metadata(c)['accounts']:
    if operation!='backup':raise RuntimeError('Managed cloud accounts are verified through the backup page')
-   completed=sorted(p for p in Path(c['backup_root']).iterdir() if re.fullmatch(r'\d{8}-\d{6}',p.name) and p.is_dir() and (p/'COMPLETE').is_file())
+   base=Path(c['backup_root']);roots=[base]+([base/'cloud'] if (base/'cloud').is_dir() else [])
+   completed=sorted((p for root in roots for p in root.iterdir() if re.fullmatch(r'\d{8}-\d{6}',p.name) and p.is_dir() and (p/'COMPLETE').is_file()),key=lambda p:p.name)
    if not completed:raise RuntimeError('No COMPLETE consistent backup set')
-   with Snapshot(completed[-1]):return backup(c,completed[-1],identifiers,automatic)
+   source=completed[-1]
+   if source.parent==base/'cloud':return backup(c,source,identifiers,automatic)
+   with Snapshot(source):return backup(c,source,identifiers,automatic)
  host=Path(c['host']);repo=c.get('cloud_repository')
  if not repo or not repo.startswith(('s3:','sftp:','rest:','b2:','azure:','rclone:')):raise RuntimeError('Explicit supported remote cloud repository required')
  credentials=host/'secrets/cloud.env'
