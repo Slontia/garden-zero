@@ -64,7 +64,9 @@ def database_lock():
 
 def volume(c):
  if not Path(c['root']).is_dir() or not Path(c['data']).is_dir():raise RuntimeError('NAS SSD/data directory missing')
- if 'microsoft' in output(['uname','-r']).lower():
+ from nas_storage import configured,verify
+ if configured(c):verify(c)
+ elif 'microsoft' in output(['uname','-r']).lower():
   # Stable volume identity, never infer identity from D: existing alone.
   ps=shutil.which('powershell.exe') or '/mnt/c/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe'
   parts=Path(c['root']).parts
@@ -77,7 +79,7 @@ def volume(c):
   expected=c.get('linux_volume_uuid')
   if not expected:raise RuntimeError('Linux volume identity adapter not configured')
   if output(['findmnt','-n','-o','UUID','--target',c['root']])!=expected:raise RuntimeError('Linux volume UUID mismatch')
- if shutil.disk_usage(c['root']).free<c['critical_outer_free']:raise RuntimeError('Outer disk free space below critical threshold')
+ if shutil.disk_usage(c['data']).free<c['critical_outer_free']:raise RuntimeError('Outer disk free space below critical threshold')
  if shutil.disk_usage(Path(c['image']).parent).free<c.get('critical_image_outer_free',c['critical_outer_free']):raise RuntimeError('Database backing disk free space below critical threshold')
 
 def mounted(c):
@@ -94,6 +96,8 @@ def verify_mount(c):
  return source
 
 def mount(c):
+ from nas_storage import configured,mount_data
+ if configured(c):mount_data(c)
  if (Path(c['host'])/'state/deployment-blocked').exists():raise RuntimeError('Storage incident unresolved; mount is blocked')
  volume(c)
  image=Path(c['image'])
@@ -172,6 +176,8 @@ def autostart(c):
 
 def start(c,module,enable_all=False):
  if (Path(c['host'])/'state/deployment-blocked').exists():raise RuntimeError('Storage incident unresolved; NAS write startup is blocked. See C:\\nas\\system\\state\\storage-incident.json')
+ from nas_storage import configured,mount_data
+ if configured(c):mount_data(c)
  if module=='all':
   modules=list(MODULES) if enable_all else autostart(c)
   if not c.get('cloud_bridge_prepared'):modules=[m for m in modules if m!='cloud']
@@ -248,7 +254,10 @@ def stop(c,module,remember_selection=True):
  for x in inventory(c):
   if x['service'] in services and (x['state']!='exited' or x['exit_code']==137 or (x['service']=='database' and x['exit_code']!=0)):
    raise RuntimeError('Unclean stop; database image retained mounted: '+x['service'])
- if module=='all':unmount(c)
+ if module=='all':
+  unmount(c)
+  from nas_storage import configured,unmount_data
+  if configured(c):unmount_data(c)
  audit(c,'stop',modules)
 
 def unmount(c):
@@ -276,9 +285,12 @@ def status(c):
   result['data_access']=snapshot(c,inspected)
  except Exception as error:result['data_access']={'state':'unavailable','rules':[],'mounts':[],'errors':[str(error)]}
 
- for name,key in [('ssd','root'),('backup','backup_root'),('database','mount')]:
+ for name,key in [('ssd','data'),('backup','backup_root'),('database','mount')]:
   try:
    if name=='database':verify_mount(c)
+   if name=='ssd' and c.get('data_storage',{}).get('driver')=='btrfs':
+    from nas_storage import verify
+    verify(c)
    d=shutil.disk_usage(c[key]);result['disk'][name]={'total':d.total,'free':d.free,'used':d.used}
   except Exception:result['disk'][name]={'state':'unavailable'}
  try:
@@ -633,7 +645,7 @@ def scheduler():
    # Do not silently keep writing after the SSD disappears or ext4 aborts its journal.
    if mounted(c):
     try:
-     Path(c['root']).stat()
+     volume(c)
      verify_mount(c)
      options=output(['findmnt','-n','-o','OPTIONS','--target',c['mount']]).split(',')
      if 'ro' in options or 'emergency_ro' in options:raise RuntimeError('Database filesystem became read-only')
@@ -641,7 +653,7 @@ def scheduler():
      (Path(c['host'])/'state/deployment-blocked').write_text('Runtime storage failure: '+str(error)+'\n')
      audit(c,'storage-guard',str(error))
      with lock():stop(c,'business',remember_selection=False)
-   if mounted(c) and (shutil.disk_usage(c['root']).free<c['critical_outer_free'] or shutil.disk_usage(Path(c['image']).parent).free<c.get('critical_image_outer_free',c['critical_outer_free']) or shutil.disk_usage(c['mount']).free<1024**3):
+   if mounted(c) and (shutil.disk_usage(c['data']).free<c['critical_outer_free'] or shutil.disk_usage(Path(c['image']).parent).free<c.get('critical_image_outer_free',c['critical_outer_free']) or shutil.disk_usage(c['mount']).free<1024**3):
     with lock():stop(c,'business',remember_selection=False);audit(c,'capacity-guard','business stopped; image remains mounted')
   except Exception as error:
    try:audit(c,'scheduler-error',str(error))

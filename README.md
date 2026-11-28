@@ -127,3 +127,5 @@ bash core/scripts/disk-backup.sh --purge-history
 ```
 
 默认保留历史；清理仅在本次完整提交后执行。卷身份校验、增量更新和中断保护保持生效。
+
+原生 Btrfs 数据卷的迁移顺序、USB 接入与身份保护见 [原生数据卷迁移](core/docs/NATIVE-BTRFS-MIGRATION.md)。当前实例是否已切换以私有配置和迁移验收记录为准；此支持代码不会自动格式化或迁移现有磁盘。

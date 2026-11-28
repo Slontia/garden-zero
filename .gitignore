@@ -1,6 +1,7 @@
 # Runtime and user content, including Windows junctions. Never traverse or publish.
 /data
 /system
+/host
 
 # Host-specific configuration and credentials.
 .env

@@ -4,6 +4,7 @@ $script='C:\nas\system\installed\start-nas.ps1'
 $content=@"
 `$ErrorActionPreference='Stop'
 if(Test-Path 'C:\nas\system\state\deployment-blocked'){throw 'NAS storage incident unresolved; startup blocked.'}
+& 'C:\nas\system\installed\attach-native-storage.ps1' -ConfigFile 'C:\nas\system\config\config.json' -Distribution '$Distribution'
 & wsl.exe -d $Distribution -u root -- systemctl start nas-session.service
 if(`$LASTEXITCODE -ne 0){exit `$LASTEXITCODE}
 & wsl.exe -d $Distribution -u root -- python3 -B /mnt/c/nas/system/installed/nasctl.py wait-ready

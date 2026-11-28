@@ -34,7 +34,7 @@ def mirror_target(c):
   fd=os.open(keypath,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
   with os.fdopen(fd,'wb') as stream:stream.write(secrets.token_bytes(32));stream.flush();os.fsync(stream.fileno())
  if unsafe(keypath) or len(keypath.read_bytes())!=32:raise RuntimeError('Invalid mirror signing key')
- identity={'root':str(root),'volume_guid':c['hdd_guid'].lower(),'nas_root':c['root'],'nas_volume_guid':c['volume_guid'].lower()}
+ identity={'root':str(root),'volume_guid':c['hdd_guid'].lower(),'nas_root':c.get('backup_instance_root',c['root']),'nas_volume_guid':c['volume_guid'].lower()}
  return Mirror(root,checkpoint,keypath.read_bytes(),identity)
 
 def hdd(c,operation,purge_history=False):
