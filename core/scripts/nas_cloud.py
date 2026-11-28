@@ -83,7 +83,7 @@ def start_verification(c,ident,*,diagnostic=False):
             with (LOCK_ROOT/'lifecycle.lock').open('a') as lifecycle:
                 while True:
                     check()
-                    try:fcntl.flock(lifecycle,fcntl.LOCK_EX|fcntl.LOCK_NB);break
+                    try:fcntl.flock(lifecycle,(fcntl.LOCK_SH if c.get('cloud_backup_engine')=='btrfs-v1' else fcntl.LOCK_EX)|fcntl.LOCK_NB);break
                     except BlockingIOError:time.sleep(.25)
                 with account_lock(c):
                     (diagnose if diagnostic else verify)(c,ident)
@@ -109,9 +109,20 @@ def diagnose(c,ident):
     value=metadata(c);account=next(a for a in value['accounts'] if a['id']==ident)
     try:
         remote_listing(c,account['mount'])
-        configuration=json.loads(command(c,['restic','-r','rclone:'+ident+':repository','cat','config']))
-        if not account.get('repository_id') or configuration.get('id')!=account['repository_id']:
-            raise RuntimeError('远端仓库身份不匹配，已停止自动备份，请检查网盘中的备份目录')
+        from nas_native_config import enabled as native_enabled
+        if native_enabled(c):
+            from nas_native import password
+            from nas_objects import RcloneStore
+            from nas_stream import Repository
+            registration=account.get('native_repository')
+            if not registration or registration.get('state')!='ready':raise RuntimeError('新备份仓库尚未完成首次验证')
+            with RcloneStore(c,account) as store:
+                repository=Repository(store,password(c),expected=registration['id'])
+                for resource in ('data','database','configuration'):repository.head(resource)
+        else:
+            configuration=json.loads(command(c,['restic','-r','rclone:'+ident+':repository','cat','config']))
+            if not account.get('repository_id') or configuration.get('id')!=account['repository_id']:
+                raise RuntimeError('远端仓库身份不匹配，已停止自动备份，请检查网盘中的备份目录')
         account.update(state='ready',error=None,health=None,verified_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),next_verify_after=0)
         event(c,'diagnosis-success',ident)
     except Exception as error:
@@ -126,7 +137,7 @@ def maintain_accounts(c):
             stale=account['state'] in ('verifying','initializing') and not verification_alive(account)
             if (account['state']=='failed' or stale) and time.time()>=account.get('next_verify_after',0):
                 if account.get('backup',{}).get('state')=='running' and process_alive(account.get('backup_job')):continue
-                start_verification(c,account['id'],diagnostic=bool(account.get('repository_id')))
+                start_verification(c,account['id'],diagnostic=bool(account.get('native_repository',{}).get('state')=='ready' if c.get('cloud_backup_engine')=='btrfs-v1' else account.get('repository_id')))
                 break  # Keep connection diagnostics serialized and bounded.
 
 def automatic_accounts(c):
@@ -364,6 +375,22 @@ def verify(c, ident):
         downloaded = command(c, ['rclone', 'cat', ident + ':' + probe])
         if not secrets.compare_digest(hashlib.sha256(payload.encode()).digest(), hashlib.sha256(downloaded.encode()).digest()): raise RuntimeError('网盘上传下载校验不一致')
         command(c, ['rclone', 'deletefile', ident + ':' + probe])
+        from nas_native_config import enabled as native_enabled
+        if native_enabled(c):
+            from nas_native import password
+            from nas_objects import RcloneStore
+            from nas_stream import Repository
+            with RcloneStore(c,account) as store:
+                registration=account.get('native_repository')
+                if not registration:
+                    if not store.empty():raise RuntimeError('新备份命名空间非空且归属未知，拒绝覆盖')
+                    registration={'id':secrets.token_hex(16),'format':1,'state':'initializing'}
+                    account['native_repository']=registration;save(statepath,value)
+                repository=Repository(store,password(c),expected=registration['id'],initialize=registration['state']=='initializing')
+                for resource in ('data','database','configuration'):repository.head(resource)
+                account['native_repository']={**registration,'state':'ready'}
+            account.update(repository_owned=True,state='ready',verified_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),error=None,health=None,next_verify_after=0)
+            save(statepath,value);event(c,'verification-success',ident);return {'state':'ready','account':ident}
         repo = 'rclone:' + ident + ':repository'
         if not account.get('repository_owned'):
             # Record ownership intent BEFORE init, so an interrupted init remains recoverable.
@@ -479,6 +506,8 @@ def wait_for_committed_marker(source,attempts=91):
         time.sleep(1)
 
 def start_backup(c,ident=None,*,automatic=False,reuse=False):
+    from nas_native_config import enabled as native_enabled
+    native=native_enabled(c)
     accounts=targets(c,[ident] if ident is not None else None,automatic=automatic)
     if any(a.get('backup',{}).get('state')=='running' and process_alive(a.get('backup_job')) for a in metadata(c)['accounts']):raise RuntimeError('已有网盘备份正在进行')
     from nas_backup_control import begin,operation
@@ -488,6 +517,14 @@ def start_backup(c,ident=None,*,automatic=False,reuse=False):
     for a in value['accounts']:
         if a['id'] in ids:a.update(backup={**known[a['id']],'state':'running','phase':None,'started':now,'error':None,'finished':None,'source':None,'snapshot_id':None,'uploaded_bytes':None,'processed_bytes':None,'consistency':'eventual'},backup_job=job)
     save(Path(c['host'])/'state/cloud-accounts.json',value)
+    if native:
+        from nas_native_jobs import launch
+        try:return launch(c,accounts,control_row)
+        except BaseException:
+            for account in accounts:
+                current=next((a for a in metadata(c)['accounts'] if a['id']==account['id']),None)
+                if current:update_account(c,account['id'],backup={**current.get('backup',{}),'state':'failed','error':'无法启动受限备份任务，既有恢复点保留','finished':datetime.datetime.now(datetime.timezone.utc).isoformat()})
+            raise
     def perform():
         from nas_backup_history import cloud_record
         for account in accounts:cloud_record(c,account,{'consistency':'eventual'})
@@ -552,7 +589,7 @@ def remove_account(c,ident,confirmed):
     if (account['state'] in ('verifying','initializing') and verification_alive(account)) or (account.get('backup',{}).get('state')=='running' and process_alive(account.get('backup_job'))):raise RuntimeError('请等待当前验证或备份结束')
     archive_path=Path(c['host'])/'state/cloud-removed-accounts.json'
     archive=read(archive_path,{'accounts':[]})
-    archive['accounts'].append({**{k:account.get(k) for k in ('id','provider','name','profile','remote_path','repository_owned','repository_id','backup','verified_at','auto_backup')},'removed_at':datetime.datetime.now(datetime.timezone.utc).isoformat()});save(archive_path,archive)
+    archive['accounts'].append({**{k:account.get(k) for k in ('id','provider','name','profile','remote_path','repository_owned','repository_id','native_repository','backup','verified_at','auto_backup')},'removed_at':datetime.datetime.now(datetime.timezone.utc).isoformat()});save(archive_path,archive)
     users=api(c,'/api/admin/user/list?page=1&per_page=100')['content']
     for user in users:
         if user['username']==ident:api(c,'/api/admin/user/delete?id='+str(user['id']),{})

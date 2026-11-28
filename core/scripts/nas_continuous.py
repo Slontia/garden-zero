@@ -238,12 +238,12 @@ def daily_retry_due(daily, slot, state, accounts, job, now):
         and now-daily.get('attempted_at',0)>=MIN_INTERVAL)
 
 
-def online_due(state,job,now):
+def online_due(state,job,now,interval=MIN_INTERVAL):
     if job.get('state') in ('running','cancelling'):return False
     finished=0
     if job.get('finished'):
         finished=datetime.datetime.fromisoformat(job['finished'].replace('Z','+00:00')).timestamp()
-    delay=1800 if job.get('state')=='interrupted' else MIN_INTERVAL
+    delay=1800 if job.get('state')=='interrupted' else interval
     return now>=max(state.get('next_at',0),finished+delay)
 
 
@@ -256,12 +256,17 @@ def serve():
         c=None
         try:
             c=cfg();now=time.time();path=Path(c['host'])/'state/cloud-online-auto.json'
+            from nas_native_config import enabled as native_enabled
+            native=native_enabled(c)
+            if native:
+                from nas_native_monitor import maintain
+                maintain(c)  # Space protection also runs when every account is disabled.
             if enabled(c):maintain_accounts(c)
             if enabled(c) and automatic_accounts(c) and not (Path(c['host'])/'state/deployment-blocked').exists():
                 state=control_read(path,{});job=control_status(c)['operation']
-                if online_due(state,job,now):
+                if online_due(state,job,now,interval=30 if native else MIN_INTERVAL):
                     # Probe at most once per interval, including while dependencies are disabled.
-                    control_save(path,{'next_at':now+MIN_INTERVAL})
+                    control_save(path,{'next_at':now+(30 if native else MIN_INTERVAL)})
                     with lock(shared=True):
                         rows={row['service']:row for row in inventory(c)}
                         ready=all(rows.get(service,{}).get('state')=='running' and rows[service].get('health')=='healthy' for service in ('database','cloud-gateway'))
